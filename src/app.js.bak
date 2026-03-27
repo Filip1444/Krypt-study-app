@@ -1,0 +1,337 @@
+// ── STATE ──
+let currentSubject = 'Mathematics'
+let currentPage = 'dashboard'
+let timerInterval = null
+let timerSeconds = 25 * 60
+let timerTotal = 25 * 60
+let timerRunning = false
+let sessions = 0
+
+const data = {
+  notes: {},
+  tasks: {},
+  schedule: []
+}
+
+// ── INIT ──
+document.addEventListener('DOMContentLoaded', () => {
+  updateDate()
+  renderSubjects()
+  renderTasks()
+  renderSchedule()
+  updateDashboard()
+  updateTimerDisplay()
+  updateTimerProgress()
+
+  // Nav
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchPage(btn.dataset.page))
+  })
+
+  // Subject buttons (delegated)
+  document.getElementById('subjectList').addEventListener('click', e => {
+    if (e.target.classList.contains('subject-btn')) {
+      selectSubject(e.target.dataset.subject)
+    }
+  })
+
+  // Add subject
+  document.getElementById('addSubjectBtn').addEventListener('click', () => {
+    document.getElementById('addSubjectForm').classList.toggle('hidden')
+    document.getElementById('newSubjectInput').focus()
+  })
+
+  document.getElementById('confirmSubject').addEventListener('click', addSubject)
+  document.getElementById('newSubjectInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') addSubject()
+  })
+
+  // Notes
+  document.getElementById('notesArea').addEventListener('input', onNotesInput)
+
+  // Tasks
+  document.getElementById('addTaskBtn').addEventListener('click', addTask)
+  document.getElementById('taskInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') addTask()
+  })
+
+  // Timer
+  document.getElementById('startBtn').addEventListener('click', startTimer)
+  document.getElementById('pauseBtn').addEventListener('click', pauseTimer)
+  document.getElementById('resetBtn').addEventListener('click', resetTimer)
+
+  document.querySelectorAll('.mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      const mins = parseInt(btn.dataset.mins)
+      timerSeconds = mins * 60
+      timerTotal = mins * 60
+      timerRunning = false
+      clearInterval(timerInterval)
+      updateTimerDisplay()
+      updateTimerProgress()
+    })
+  })
+
+  // Schedule
+  document.getElementById('addTestBtn').addEventListener('click', () => {
+    document.getElementById('addTestForm').classList.toggle('hidden')
+  })
+  document.getElementById('confirmTest').addEventListener('click', addTest)
+})
+
+// ── NAVIGATION ──
+function switchPage(page) {
+  currentPage = page
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
+  document.getElementById('page-' + page).classList.add('active')
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.page === page)
+  })
+  if (page === 'notes') loadNotes()
+  if (page === 'tasks') renderTasks()
+  if (page === 'dashboard') updateDashboard()
+}
+
+// ── SUBJECTS ──
+const defaultSubjects = ['Mathematics', 'Physics', 'Chemistry', 'History', 'Literature']
+let subjects = [...defaultSubjects]
+
+function renderSubjects() {
+  const list = document.getElementById('subjectList')
+  list.innerHTML = subjects.map(s => `
+    <button class="subject-btn ${s === currentSubject ? 'active' : ''}" data-subject="${s}">${s}</button>
+  `).join('')
+}
+
+function selectSubject(name) {
+  currentSubject = name
+  renderSubjects()
+  updateSubjectLabels()
+  loadNotes()
+  renderTasks()
+  updateDashboard()
+}
+
+function addSubject() {
+  const input = document.getElementById('newSubjectInput')
+  const name = input.value.trim()
+  if (!name || subjects.includes(name)) return
+  subjects.push(name)
+  input.value = ''
+  document.getElementById('addSubjectForm').classList.add('hidden')
+  renderSubjects()
+  selectSubject(name)
+}
+
+function updateSubjectLabels() {
+  document.getElementById('dashSubjectLabel').textContent = currentSubject
+  document.getElementById('notesSubjectLabel').textContent = currentSubject
+  document.getElementById('tasksSubjectLabel').textContent = currentSubject
+}
+
+// ── NOTES ──
+let saveTimeout = null
+
+function loadNotes() {
+  const area = document.getElementById('notesArea')
+  area.value = data.notes[currentSubject] || ''
+  updateCharCount()
+}
+
+function onNotesInput() {
+  const area = document.getElementById('notesArea')
+  data.notes[currentSubject] = area.value
+  updateCharCount()
+  updateDashboard()
+
+  clearTimeout(saveTimeout)
+  const ind = document.getElementById('savedIndicator')
+  ind.classList.remove('show')
+  saveTimeout = setTimeout(() => { ind.classList.add('show') }, 800)
+}
+
+function updateCharCount() {
+  const val = document.getElementById('notesArea').value
+  document.getElementById('charCount').textContent = val.length + ' characters'
+}
+
+// ── TASKS ──
+function renderTasks() {
+  if (!data.tasks[currentSubject]) data.tasks[currentSubject] = []
+  const tasks = data.tasks[currentSubject]
+  const list = document.getElementById('taskList')
+  const empty = document.getElementById('taskEmpty')
+
+  empty.style.display = tasks.length === 0 ? 'block' : 'none'
+  list.innerHTML = tasks.map((t, i) => `
+    <li class="task-item ${t.done ? 'done' : ''}" data-index="${i}">
+      <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask(${i})">
+      <span>${t.text}</span>
+      <button class="task-delete" onclick="deleteTask(${i})">×</button>
+    </li>
+  `).join('')
+
+  updateDashboard()
+}
+
+function addTask() {
+  const input = document.getElementById('taskInput')
+  const text = input.value.trim()
+  if (!text) return
+  if (!data.tasks[currentSubject]) data.tasks[currentSubject] = []
+  data.tasks[currentSubject].push({ text, done: false })
+  input.value = ''
+  renderTasks()
+}
+
+function toggleTask(i) {
+  data.tasks[currentSubject][i].done = !data.tasks[currentSubject][i].done
+  renderTasks()
+}
+
+function deleteTask(i) {
+  data.tasks[currentSubject].splice(i, 1)
+  renderTasks()
+}
+
+// ── TIMER ──
+function updateTimerDisplay() {
+  const m = Math.floor(timerSeconds / 60).toString().padStart(2, '0')
+  const s = (timerSeconds % 60).toString().padStart(2, '0')
+  const str = m + ':' + s
+  document.getElementById('timerDisplay').textContent = str
+  document.getElementById('dashTimer').textContent = str
+}
+
+function updateTimerProgress() {
+  const circ = 2 * Math.PI * 88
+  const offset = circ * (1 - timerSeconds / timerTotal)
+  document.getElementById('timerProgress').style.strokeDashoffset = offset
+}
+
+function startTimer() {
+  if (timerRunning) return
+  timerRunning = true
+  timerInterval = setInterval(() => {
+    if (timerSeconds <= 0) {
+      clearInterval(timerInterval)
+      timerRunning = false
+      sessions++
+      document.getElementById('sessionCount').textContent = sessions
+      return
+    }
+    timerSeconds--
+    updateTimerDisplay()
+    updateTimerProgress()
+  }, 1000)
+}
+
+function pauseTimer() {
+  timerRunning = false
+  clearInterval(timerInterval)
+}
+
+function resetTimer() {
+  timerRunning = false
+  clearInterval(timerInterval)
+  const active = document.querySelector('.mode-btn.active')
+  timerSeconds = parseInt(active.dataset.mins) * 60
+  timerTotal = timerSeconds
+  updateTimerDisplay()
+  updateTimerProgress()
+}
+
+// ── SCHEDULE ──
+function renderSchedule() {
+  const list = document.getElementById('scheduleList')
+  const empty = document.getElementById('scheduleEmpty')
+  const sorted = [...data.schedule].sort((a, b) => new Date(a.date) - new Date(b.date))
+  empty.style.display = sorted.length === 0 ? 'block' : 'none'
+
+  list.innerHTML = sorted.map((t, i) => {
+    const d = new Date(t.date + 'T00:00:00')
+    const today = new Date(); today.setHours(0,0,0,0)
+    const diff = Math.round((d - today) / 86400000)
+    const day = d.getDate().toString().padStart(2, '0')
+    const month = d.toLocaleString('default', { month: 'short' }).toUpperCase()
+    let countdownClass = ''
+    let countdownText = diff === 0 ? 'Today!' : diff < 0 ? 'Past' : `In ${diff} day${diff !== 1 ? 's' : ''}`
+    if (diff === 0) countdownClass = 'today'
+    else if (diff > 0 && diff <= 3) countdownClass = 'soon'
+
+    return `
+      <div class="test-item">
+        <div class="test-date-block">
+          <div class="test-day">${day}</div>
+          <div class="test-month">${month}</div>
+        </div>
+        <div class="test-info">
+          <div class="test-name">${t.name}</div>
+          <div class="test-subject">${t.subject}</div>
+        </div>
+        <div class="test-countdown ${countdownClass}">${countdownText}</div>
+        <button class="test-delete" onclick="deleteTest(${data.schedule.indexOf(t)})">×</button>
+      </div>
+    `
+  }).join('')
+
+  updateDashboard()
+}
+
+function addTest() {
+  const subject = document.getElementById('testSubject').value.trim()
+  const name = document.getElementById('testName').value.trim()
+  const date = document.getElementById('testDate').value
+  if (!subject || !name || !date) return
+  data.schedule.push({ subject, name, date })
+  document.getElementById('testSubject').value = ''
+  document.getElementById('testName').value = ''
+  document.getElementById('testDate').value = ''
+  document.getElementById('addTestForm').classList.add('hidden')
+  renderSchedule()
+}
+
+function deleteTest(i) {
+  data.schedule.splice(i, 1)
+  renderSchedule()
+}
+
+// ── DASHBOARD ──
+function updateDashboard() {
+  updateSubjectLabels()
+
+  // Task count
+  const tasks = data.tasks[currentSubject] || []
+  const remaining = tasks.filter(t => !t.done).length
+  document.getElementById('dashTaskCount').textContent = remaining
+
+  // Notes preview
+  const notes = data.notes[currentSubject] || ''
+  document.getElementById('dashNotesPreview').textContent = notes || 'No notes yet...'
+
+  // Next test
+  const today = new Date(); today.setHours(0,0,0,0)
+  const upcoming = data.schedule
+    .filter(t => new Date(t.date + 'T00:00:00') >= today)
+    .sort((a, b) => new Date(a.date) - new Date(b.date))
+
+  if (upcoming.length > 0) {
+    document.getElementById('dashNextTest').textContent = upcoming[0].name
+    const d = new Date(upcoming[0].date + 'T00:00:00')
+    const diff = Math.round((d - today) / 86400000)
+    document.getElementById('dashNextTestDate').textContent =
+      diff === 0 ? 'Today! — ' + upcoming[0].subject : `In ${diff} day${diff !== 1 ? 's' : ''} — ` + upcoming[0].subject
+  } else {
+    document.getElementById('dashNextTest').textContent = '—'
+    document.getElementById('dashNextTestDate').textContent = 'No upcoming tests'
+  }
+}
+
+// ── DATE ──
+function updateDate() {
+  const now = new Date()
+  document.getElementById('dateDisplay').textContent =
+    now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+}

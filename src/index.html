@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Study App</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="logo">ST<span>DY</span></div>
+
+    <div class="section-label">SUBJECTS</div>
+    <div class="subject-list" id="subjectList"></div>
+    <button class="add-subject-btn" id="addSubjectBtn">+ Add Subject</button>
+    <div class="add-subject-form hidden" id="addSubjectForm">
+      <input type="text" id="newSubjectInput" placeholder="Subject name..." spellcheck="false" autocomplete="off" />
+      <button id="confirmSubject">Add</button>
+    </div>
+
+    <!-- STREAK WIDGET -->
+    <div class="streak-widget" id="streakWidget">
+      <div class="streak-top">
+        <span class="streak-flame">🔥</span>
+        <span class="streak-count" id="streakCount">0</span>
+        <span class="streak-label">day streak</span>
+        <span class="streak-dot pending" id="streakDot"></span>
+      </div>
+      <div class="streak-goal-text" id="streakGoalText">1 Pomodoro or flashcard session</div>
+      <div class="streak-milestone-msg" id="streakMilestoneMsg"></div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button class="nav-btn active" data-page="dashboard"><span class="nav-icon">▦</span> Dashboard</button>
+      <button class="nav-btn" data-page="notes"><span class="nav-icon">✎</span> Notes</button>
+      <button class="nav-btn" data-page="tasks"><span class="nav-icon">◎</span> Tasks</button>
+      <button class="nav-btn" data-page="timer"><span class="nav-icon">◷</span> Timer</button>
+      <button class="nav-btn" data-page="flashcards"><span class="nav-icon">⬡</span> Flashcards</button>
+      <button class="nav-btn" data-page="grades"><span class="nav-icon">◷</span> Grades</button>
+      <button class="nav-btn" data-page="schedule"><span class="nav-icon">◫</span> Schedule</button>
+      <button class="nav-btn" data-page="progress"><span class="nav-icon">◈</span> Progress</button>
+    </nav>
+
+    <button class="nav-btn" id="settingsGearBtn"><span class="nav-icon">⚙</span> Settings</button>
+  </aside>
+  <div class="sidebar-resizer" id="sidebarResizer" title="Resize sidebar"></div>
+
+  <!-- SETTINGS PANEL -->
+  <div class="settings-panel hidden" id="settingsPanel">
+    <div class="settings-title">Settings</div>
+
+    <div class="settings-section-label">THEME</div>
+    <div class="theme-btn-row">
+      <button class="theme-btn" data-theme="dark">Dark</button>
+      <button class="theme-btn" data-theme="light">Light</button>
+    </div>
+
+    <div class="settings-section-label">ACCENT COLOR</div>
+    <div class="swatch-row" id="accentSwatches"></div>
+    <div class="settings-picker-row">
+      <label class="settings-picker-label">Custom</label>
+      <input type="color" id="accentPicker" class="accent-picker" />
+    </div>
+  </div>
+
+  <!-- ERROR TOAST -->
+  <div class="error-toast" id="errorToast"></div>
+
+  <!-- CONTEXT MENU -->
+  <div class="ctx-menu hidden" id="ctxMenu">
+    <button id="ctxRename">✎  Rename</button>
+    <button id="ctxDelete" class="ctx-danger">✕  Delete</button>
+  </div>
+
+  <!-- FILE CONTEXT MENU -->
+  <div class="ctx-menu hidden" id="fileCtxMenu">
+    <button id="fileCtxRename">✎  Rename</button>
+    <button id="fileCtxDelete" class="ctx-danger">✕  Delete</button>
+  </div>
+
+  <!-- IMAGE CONTEXT MENU -->
+  <div class="ctx-menu hidden" id="imageCtxMenu">
+    <button type="button" data-action="delete-image" class="ctx-danger">Delete image</button>
+  </div>
+
+  <!-- FORMAT PICKER MODAL -->
+  <div class="modal-overlay hidden" id="formatModal">
+    <div class="modal format-modal">
+      <div class="modal-title">Choose export format</div>
+      <div class="fmt-btn-row">
+        <button class="fmt-btn" data-fmt="txt">
+          <span class="fmt-icon">📄</span>
+          <span class="fmt-label">Plain Text</span>
+          <span class="fmt-ext">.txt</span>
+        </button>
+        <button class="fmt-btn" data-fmt="html">
+          <span class="fmt-icon">🌐</span>
+          <span class="fmt-label">HTML</span>
+          <span class="fmt-ext">.html</span>
+        </button>
+        <button class="fmt-btn" data-fmt="docx">
+          <span class="fmt-icon">📝</span>
+          <span class="fmt-label">Word</span>
+          <span class="fmt-ext">.docx</span>
+        </button>
+      </div>
+      <div class="modal-btns">
+        <button id="fmtCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIRM DELETE MODAL -->
+  <div class="modal-overlay hidden" id="confirmOverlay">
+    <div class="modal">
+      <div class="modal-title" id="confirmTitle">Delete?</div>
+      <div class="confirm-msg" id="confirmMsg"></div>
+      <div class="modal-btns">
+        <button id="confirmCancelBtn">Cancel</button>
+        <button id="confirmOkBtn" class="btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL -->
+  <div class="modal-overlay hidden" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-title" id="modalTitle">Rename</div>
+      <input type="text" id="modalInput" spellcheck="false" autocomplete="off" />
+      <div class="modal-btns">
+        <button id="modalCancelBtn">Cancel</button>
+        <button id="modalConfirmBtn" class="btn-accent">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <main class="content">
+
+    <!-- DASHBOARD -->
+    <section class="page active" id="page-dashboard">
+      <header class="page-header">
+        <div>
+          <div class="page-eyebrow" id="dashSubjectLabel">—</div>
+          <h1>Dashboard</h1>
+        </div>
+        <div class="date-display" id="dateDisplay"></div>
+      </header>
+      <div class="dashboard-grid">
+        <div class="dash-card">
+          <div class="dash-card-label">FOCUS TIMER</div>
+          <div class="timer-display-mini" id="dashTimer">25:00</div>
+          <div class="dash-card-sub">Pomodoro session</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-label">TASKS REMAINING</div>
+          <div class="dash-big-num" id="dashTaskCount">0</div>
+          <div class="dash-card-sub">for this subject</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-label">NEXT TEST</div>
+          <div class="dash-next-test" id="dashNextTest">—</div>
+          <div class="dash-card-sub" id="dashNextTestDate">No upcoming tests</div>
+        </div>
+        <div class="dash-card">
+          <div class="dash-card-label">NOTE FILES</div>
+          <div class="dash-big-num" id="dashFileCount">0</div>
+          <div class="dash-card-sub">in this subject</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- NOTES -->
+    <section class="page" id="page-notes">
+      <div id="notesFileView">
+        <header class="page-header">
+          <div>
+            <div class="page-eyebrow" id="notesSubjectLabel">—</div>
+            <h1>Notes</h1>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <input type="text" id="notesSearch" class="notes-search-input" placeholder="Search notes..." spellcheck="false" autocomplete="off" />
+            <button class="btn-accent-outline" id="newFileBtn">+ New File</button>
+          </div>
+        </header>
+        <div class="file-list" id="fileList"></div>
+        <div class="task-empty" id="fileListEmpty">No files yet. Create one above.</div>
+        <div class="file-selection-bar hidden" id="fileSelectionBar">
+          <span class="sel-count" id="selectionCount"></span>
+          <button class="sel-btn" id="selectAllBtn">Select all</button>
+          <button class="sel-btn sel-btn-accent" id="exportSelectedBtn">↑ Export</button>
+          <button class="sel-btn sel-btn-danger" id="deleteSelectedBtn">✕ Delete</button>
+        </div>
+      </div>
+      <div id="notesEditorView" class="hidden">
+        <header class="page-header">
+          <div style="display:flex;align-items:center;gap:12px">
+            <button class="back-btn" id="backToFilesBtn">← Back</button>
+            <div>
+              <div class="page-eyebrow" id="editorSubjectLabel">—</div>
+              <div class="editor-filename" id="editorFilename">Untitled</div>
+            </div>
+          </div>
+          <button class="export-btn" id="exportBtn">↑ Export</button>
+        </header>
+        <div class="notes-container">
+          <div class="editor-toolbar">
+            <div class="toolbar-group">
+              <button class="tb-btn" data-cmd="bold" title="Bold"><b>B</b></button>
+              <button class="tb-btn" data-cmd="italic" title="Italic"><i>I</i></button>
+              <button class="tb-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group">
+              <button class="tb-btn" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
+              <button class="tb-btn" id="redoBtn" title="Redo (Ctrl+Y)">↷</button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group">
+              <select id="fontFamily">
+                <option value="DM Mono, monospace">Mono</option>
+                <option value="Syne, sans-serif">Syne</option>
+                <option value="Georgia, serif">Georgia</option>
+                <option value="Arial, sans-serif">Arial</option>
+                <option value="'Courier New', monospace">Courier</option>
+              </select>
+              <select id="fontSize">
+                <option value="12px">12</option>
+                <option value="14px" selected>14</option>
+                <option value="16px">16</option>
+                <option value="18px">18</option>
+                <option value="22px">22</option>
+                <option value="28px">28</option>
+              </select>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group" style="position:relative">
+              <button class="tb-btn sym-picker-btn" id="symbolPickerBtn" title="Insert symbol" onclick="toggleSymbolPicker()">Ω</button>
+              <div class="symbol-picker hidden" id="symbolPicker"></div>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group">
+              <button class="tb-btn" data-align="justifyLeft" title="Align left">⟸</button>
+              <button class="tb-btn" data-align="justifyCenter" title="Align center">≡</button>
+              <button class="tb-btn" data-align="justifyRight" title="Align right">⟹</button>
+              <button class="tb-btn" data-align="justifyFull" title="Justify">☰</button>
+            </div>
+            <div class="toolbar-divider"></div>
+            <div class="toolbar-group">
+              <button class="tb-btn" id="insertImageBtn" title="Insert image">🖼</button>
+            </div>
+          </div>
+          <input type="file" id="imageInput" accept="image/*" class="hidden" />
+          <div id="notesArea" class="notes-editor" contenteditable="true"
+               spellcheck="false" data-placeholder="Start writing..."></div>
+          <div class="notes-footer">
+            <span id="charCount">0 characters</span>
+            <span class="saved-indicator" id="savedIndicator">saved</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TASKS -->
+    <section class="page" id="page-tasks">
+      <header class="page-header">
+        <div>
+          <div class="page-eyebrow" id="tasksSubjectLabel">—</div>
+          <h1>Tasks</h1>
+        </div>
+      </header>
+      <div class="tasks-container">
+        <div class="task-input-row">
+          <input type="text" id="taskInput" placeholder="Add a new task..."
+                 spellcheck="false" autocomplete="off" />
+          <button id="addTaskBtn">Add</button>
+        </div>
+        <ul class="task-list" id="taskList"></ul>
+        <div class="task-empty" id="taskEmpty">No tasks yet.</div>
+      </div>
+    </section>
+
+    <!-- TIMER -->
+    <section class="page" id="page-timer">
+      <header class="page-header">
+        <div><div class="page-eyebrow">Focus</div><h1>Timer</h1></div>
+      </header>
+      <div class="timer-container">
+        <div class="timer-modes">
+          <button class="mode-btn active" data-mins="25">Pomodoro</button>
+          <button class="mode-btn" data-mins="5">Short Break</button>
+          <button class="mode-btn" data-mins="15">Long Break</button>
+        </div>
+        <div class="timer-circle">
+          <svg viewBox="0 0 200 200">
+            <circle class="track" cx="100" cy="100" r="88"/>
+            <circle class="progress" id="timerProgress" cx="100" cy="100" r="88"/>
+          </svg>
+          <div class="timer-text" id="timerDisplay">25:00</div>
+        </div>
+        <div class="timer-controls">
+          <button id="startBtn">Start</button>
+          <button id="pauseBtn">Pause</button>
+          <button id="resetBtn">Reset</button>
+        </div>
+        <div class="session-count">Sessions today: <span id="sessionCount">0</span></div>
+      </div>
+    </section>
+
+    <!-- FLASHCARDS -->
+    <section class="page" id="page-flashcards">
+      <!-- LIST VIEW -->
+      <div id="fcListView">
+        <header class="page-header">
+          <div>
+            <div class="page-eyebrow" id="fcSubjectLabel">—</div>
+            <h1>Flashcards</h1>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn-accent-outline" id="fcStartReviewBtn" style="display:none">Review</button>
+            <button class="btn-accent-outline" id="fcNewCardBtn">+ New Card</button>
+          </div>
+        </header>
+
+        <!-- Add card form -->
+        <div class="fc-add-form hidden" id="fcAddForm">
+          <div class="fc-form-row">
+            <div class="fc-form-field">
+              <label class="fc-form-label">FRONT</label>
+              <input type="text" id="fcFrontInput" placeholder="Question or term..." spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="fc-form-field">
+              <label class="fc-form-label">BACK</label>
+              <input type="text" id="fcBackInput" placeholder="Answer or definition..." spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="fc-form-actions">
+              <button class="fc-cancel-btn" id="fcCancelBtn">Cancel</button>
+              <button class="fc-save-btn" id="fcSaveBtn">Save Card</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="fc-card-list" id="fcCardList"></div>
+        <div class="task-empty" id="fcEmpty">No cards yet. Add one above.</div>
+      </div>
+
+      <!-- REVIEW VIEW -->
+      <div id="fcReviewView" class="hidden">
+        <div class="fc-review-header">
+          <button class="back-btn" id="fcBackBtn">← Back</button>
+          <span id="fcProgress" class="fc-progress-label"></span>
+        </div>
+        <div class="fc-card-wrap">
+          <div class="fc-review-card" id="fcReviewCard">
+            <div class="fc-review-front" id="fcCardFront"></div>
+            <div class="fc-review-back" id="fcCardBack"></div>
+          </div>
+        </div>
+        <div class="fc-review-actions">
+          <button class="fc-flip-btn" id="fcFlipBtn">Flip card</button>
+          <div class="fc-answer-btns hidden" id="fcReviewAnswer">
+            <button class="fc-again-btn" id="fcAgainBtn">✕ Again</button>
+            <button class="fc-gotit-btn" id="fcGotItBtn">✓ Got it</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GRADES -->
+    <section class="page" id="page-grades">
+      <header class="page-header">
+        <div>
+          <div class="page-eyebrow" id="gradesSubjectLabel">—</div>
+          <h1>Grades</h1>
+        </div>
+        <div class="grade-letter" id="gradeLetter">—</div>
+      </header>
+
+      <!-- Stats row -->
+      <div class="grades-stats-row">
+        <div class="grades-stat-card">
+          <div class="grades-stat-label">AVERAGE</div>
+          <div class="grades-stat-num" id="gradeAvg">—</div>
+        </div>
+        <div class="grades-stat-card">
+          <div class="grades-stat-label">HIGHEST</div>
+          <div class="grades-stat-num" id="gradeHighest">—</div>
+        </div>
+        <div class="grades-stat-card">
+          <div class="grades-stat-label">LOWEST</div>
+          <div class="grades-stat-num" id="gradeLowest">—</div>
+        </div>
+        <div class="grades-stat-card hidden" id="gradeGapBlock">
+          <div class="grades-stat-label">VS TARGET</div>
+          <div class="grades-stat-num" id="gradeGapNum">—</div>
+          <div class="grades-stat-sub" id="gradeGapDesc"></div>
+        </div>
+      </div>
+
+      <!-- Target setter -->
+      <div class="grades-target-row">
+        <span class="grades-target-label">Target grade</span>
+        <input type="number" id="gradeTargetInput" class="grades-target-input"
+               placeholder="e.g. 80" min="0" max="100" />
+        <span class="grades-target-pct">%</span>
+        <button class="grades-target-btn" id="gradeSetTargetBtn">Set</button>
+      </div>
+
+      <!-- Add grade form -->
+      <div class="grades-add-row">
+        <input type="text" id="gradeNameInput" placeholder="Assessment name..."
+               spellcheck="false" autocomplete="off" class="grades-name-input" />
+        <input type="text" id="gradeAchievedInput" placeholder="Got" class="grades-pts-input" />
+        <span class="grades-target-pct">/</span>
+        <input type="text" id="gradeMaxInput" placeholder="Max" class="grades-pts-input" />
+        <button class="grades-add-btn" id="gradeAddBtn">Add</button>
+      </div>
+
+      <div class="grade-list" id="gradeList"></div>
+      <div class="task-empty" id="gradeEmpty">No grades yet. Add one above.</div>
+    </section>
+
+    <!-- SCHEDULE -->
+    <section class="page" id="page-schedule">
+      <header class="page-header">
+        <div><div class="page-eyebrow">Upcoming</div><h1>Test Schedule</h1></div>
+        <button class="add-test-btn" id="addTestBtn">+ Add Test</button>
+      </header>
+      <div class="add-test-form hidden" id="addTestForm">
+        <div class="form-row">
+          <input type="text" id="testSubject" placeholder="Subject" spellcheck="false" autocomplete="off" />
+          <input type="text" id="testName" placeholder="Test / Exam name" spellcheck="false" autocomplete="off" />
+          <input type="date" id="testDate" />
+          <button id="confirmTest">Add</button>
+        </div>
+      </div>
+      <div class="schedule-list" id="scheduleList"></div>
+      <div class="task-empty" id="scheduleEmpty">No tests scheduled.</div>
+    </section>
+
+    <!-- PROGRESS -->
+    <section class="page" id="page-progress">
+      <header class="page-header">
+        <div><div class="page-eyebrow">Overview</div><h1>Progress</h1></div>
+      </header>
+
+      <div class="prog-stats-row">
+        <div class="prog-stat-card">
+          <div class="prog-stat-num" id="progStreakCount">0</div>
+          <div class="prog-stat-label">🔥 Current Streak</div>
+          <div class="prog-stat-sub">days in a row</div>
+        </div>
+        <div class="prog-stat-card">
+          <div class="prog-stat-num" id="progTotalDays">0</div>
+          <div class="prog-stat-label">📅 Total Days Studied</div>
+          <div class="prog-stat-sub">all time</div>
+        </div>
+        <div class="prog-stat-card">
+          <div class="prog-stat-num" id="progTotalCards">0</div>
+          <div class="prog-stat-label">🃏 Total Flashcards</div>
+          <div class="prog-stat-sub">across all subjects</div>
+        </div>
+      </div>
+
+      <div class="heatmap-section">
+        <div class="heatmap-title">Last 30 Days</div>
+        <div class="heatmap-grid" id="heatmapGrid"></div>
+        <div class="heatmap-legend">
+          <span class="heatmap-cell"></span> No study
+          <span class="heatmap-cell done" style="margin-left:16px"></span> Goal met
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
