@@ -3,6 +3,8 @@ const path = require('path')
 const fs = require('fs')
 
 // ── DATA FILE PATH ──
+// Per-user file on disk (never bundled in the app). Windows example:
+// %APPDATA%\study-app\studyapp-data.json  (folder name follows package.json "name")
 const dataPath = path.join(app.getPath('userData'), 'studyapp-data.json')
 
 function loadData() {

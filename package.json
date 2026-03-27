@@ -2,12 +2,37 @@
   "name": "study-app",
   "version": "1.0.0",
   "description": "Study desktop app",
+  "author": "Study App",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.studyapp.desktop",
+    "productName": "Study App",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "sign": null,
+      "signAndEditExecutable": false
+    },
+    "forceCodeSigning": false
   },
   "devDependencies": {
-    "electron": "^29.0.0"
+    "electron": "^29.0.0",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "docx": "^9.6.1"
