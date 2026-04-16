@@ -19,9 +19,11 @@ function saveData(data) {
 }
 
 function createWindow() {
+  const iconPath = path.join(__dirname, 'assets', 'icon.ico')
   const win = new BrowserWindow({
     width: 1100,
     height: 720,
+    icon: iconPath,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
