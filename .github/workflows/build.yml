@@ -1,4 +1,4 @@
-name: Build Study App
+name: Build KRYPT
 
 on:
   push:
@@ -92,24 +92,24 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Study App ${{ github.ref_name }}
+          name: KRYPT ${{ github.ref_name }}
           draft: false
           prerelease: false
           files: |
             dist/windows/*.exe
             dist/macos/*.dmg
           body: |
-            ## Study App ${{ github.ref_name }}
+            ## KRYPT ${{ github.ref_name }}
 
             ### Downloads
             | Platform | File |
             |----------|------|
-            | 🪟 Windows Installer | `Study App Setup *.exe` |
-            | 🪟 Windows Portable  | `Study App *.exe` (no install needed) |
-            | 🍎 macOS             | `Study App *.dmg` |
+            | 🪟 Windows Installer | `KRYPT Setup *.exe` |
+            | 🪟 Windows Portable  | `KRYPT *.exe` (no install needed) |
+            | 🍎 macOS             | `KRYPT *.dmg` |
 
             > **⚠️ macOS Users — "App is damaged" error fix:** 
             > 1. Open the `.dmg` and drag the app into your **Applications** folder
             > 2. Open the **Terminal** app on your Mac
-            > 3. Paste this exact command and press Enter: `xattr -cr "/Applications/Study App.app"`
+            > 3. Paste this exact command and press Enter: `xattr -cr "/Applications/KRYPT.app"`
             > 4. You can now launch the app normally! (This bypasses Apple's strict Gatekeeper requirement for paid developer certificates).

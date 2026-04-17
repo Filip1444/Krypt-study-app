@@ -4,8 +4,8 @@ const fs = require('fs')
 
 // ── DATA FILE PATH ──
 // Per-user file on disk (never bundled in the app). Windows example:
-// %APPDATA%\study-app\studyapp-data.json  (folder name follows package.json "name")
-const dataPath = path.join(app.getPath('userData'), 'studyapp-data.json')
+// %APPDATA%\krypt\krypt-data.json  (folder name follows package.json "name")
+const dataPath = path.join(app.getPath('userData'), 'krypt-data.json')
 
 function loadData() {
   try {

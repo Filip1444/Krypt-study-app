@@ -1,11 +1,11 @@
-# Study App — Introduction
+# KRYPT — Introduction
 
-**Study App** is a lightweight, offline-first desktop study companion built with [Electron](https://www.electronjs.org/).  
+**KRYPT** is a lightweight, offline-first desktop study companion built with [Electron](https://www.electronjs.org/).  
 It helps you organize your notes, subjects, and study sessions — all stored locally on your machine, with no accounts or internet required.
 
 ## Who is it for?
 
-Whether you're a student cramming for exams or a lifelong learner keeping a personal knowledge base, Study App gives you a clean, distraction-free environment to write and revisit your notes.
+Whether you're a student cramming for exams or a lifelong learner keeping a personal knowledge base, KRYPT gives you a clean, distraction-free environment to write and revisit your notes.
 
 ## Key Features
 
@@ -18,7 +18,7 @@ Whether you're a student cramming for exams or a lifelong learner keeping a pers
 ## Getting Started
 
 1. Download the installer for your platform from the `release/` or `release_macOS/` directory.
-2. Run the installer and launch **Study App**.
+2. Run the installer and launch **KRYPT**.
 3. Create your first subject and start adding notes!
 
 > **Note:** Your data is saved automatically to your OS user-data folder — no manual saving needed.

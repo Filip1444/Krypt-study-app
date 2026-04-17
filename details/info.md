@@ -1,9 +1,9 @@
-# Study App — Technical Info
+# KRYPT — Technical Info
 
 ## Project Structure
 
 ```
-study_app/
+krypt/
 ├── main.js            # Electron main process
 ├── package.json       # Project config & build settings
 ├── icon.png           # App icon (source PNG)
@@ -55,8 +55,8 @@ User data (subjects, notes) is persisted as JSON in the OS user-data directory:
 
 | Platform | Path |
 |----------|------|
-| Windows  | `%APPDATA%\study-app\studyapp-data.json` |
-| macOS    | `~/Library/Application Support/study-app/studyapp-data.json` |
+| Windows  | `%APPDATA%\krypt\krypt-data.json` |
+| macOS    | `~/Library/Application Support/krypt/krypt-data.json` |
 
 ## Icon Files
 
@@ -77,3 +77,4 @@ User data (subjects, notes) is persisted as JSON in the OS user-data directory:
 |---------|-------|
 | 1.0.0 BETA | Initial release (Windows) |
 | 1.0.0 | Stable Windows release + macOS build |
+| 1.1.0 | Rebranded to KRYPT, added Windows installation wizard |
