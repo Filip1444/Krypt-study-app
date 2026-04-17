@@ -519,6 +519,8 @@ function selectSubject(name) {
   updateDashboard()
   const fcPage = document.getElementById('page-flashcards')
   if (fcPage && fcPage.classList.contains('active')) renderFlashcardList()
+  const gradesPage = document.getElementById('page-grades')
+  if (gradesPage && gradesPage.classList.contains('active')) renderGrades()
 }
 
 function addSubject() {
