@@ -1,6 +1,6 @@
 {
   "name": "krypt",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "KRYPT desktop app",
   "author": "KRYPT",
   "main": "main.js",
@@ -28,8 +28,7 @@
         "portable"
       ],
       "icon": "assets/icon.ico",
-      "sign": null,
-      "signAndEditExecutable": false
+      "sign": null
     },
     "nsis": {
       "oneClick": false,
