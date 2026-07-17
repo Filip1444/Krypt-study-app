@@ -907,6 +907,107 @@ function handleEditorMarkdown(e) {
   }
 }
 
+function handleNoteSelection(e) {
+  const badge = document.getElementById('notesSelectionBadge')
+  if (!badge) return
+  
+  setTimeout(() => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.rangeCount) {
+      hideSelectionBadge()
+      return
+    }
+    
+    const range = sel.getRangeAt(0)
+    const text = sel.toString().trim()
+    
+    // Verify selection is within notesArea
+    const notesArea = document.getElementById('notesArea')
+    if (!notesArea || !notesArea.contains(range.commonAncestorContainer)) {
+      hideSelectionBadge()
+      return
+    }
+    
+    if (text.length < 2 || text.length > 150) {
+      hideSelectionBadge()
+      return
+    }
+    
+    const rect = range.getBoundingClientRect()
+    
+    badge.style.display = 'block'
+    badge.classList.remove('hidden')
+    
+    const badgeWidth = badge.offsetWidth || 120
+    const badgeHeight = badge.offsetHeight || 30
+    
+    badge.style.left = `${window.scrollX + rect.left + (rect.width / 2) - (badgeWidth / 2)}px`
+    badge.style.top = `${window.scrollY + rect.top - badgeHeight - 8}px`
+  }, 50)
+}
+
+function hideSelectionBadge() {
+  const badge = document.getElementById('notesSelectionBadge')
+  if (badge) {
+    badge.classList.add('hidden')
+    setTimeout(() => {
+      if (badge.classList.contains('hidden')) {
+        badge.style.display = 'none'
+      }
+    }, 150)
+  }
+}
+
+function openQuickFlashcardModal() {
+  const sel = window.getSelection()
+  const text = sel ? sel.toString().trim() : ''
+  
+  const modal = document.getElementById('quickFlashcardModal')
+  const frontInput = document.getElementById('quickFcFrontInput')
+  const backInput = document.getElementById('quickFcBackInput')
+  
+  frontInput.value = text
+  backInput.value = ''
+  
+  modal.classList.remove('hidden')
+  hideSelectionBadge()
+  
+  setTimeout(() => {
+    backInput.focus()
+  }, 100)
+}
+
+function closeQuickFlashcardModal() {
+  document.getElementById('quickFlashcardModal').classList.add('hidden')
+  const editor = document.getElementById('notesArea')
+  if (editor) editor.focus()
+}
+
+function saveQuickFlashcard() {
+  const front = document.getElementById('quickFcFrontInput').value.trim()
+  const back = document.getElementById('quickFcBackInput').value.trim()
+  
+  if (!front || !back) {
+    showError('Please fill in both front and back fields.')
+    return
+  }
+  
+  if (!data.flashcards[currentSubject]) data.flashcards[currentSubject] = []
+  data.flashcards[currentSubject].push({
+    id: 'fc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+    front,
+    back,
+    ease: 2.5,
+    interval: 1,
+    due: Date.now()
+  })
+  
+  scheduleSave()
+  closeQuickFlashcardModal()
+  showError('Flashcard created! 🃏')
+}
+
+
 let noteSaveTimer = null
 function onNotesInput() {
   saveCurrentFile()

@@ -138,6 +138,30 @@
     </div>
   </div>
 
+  <!-- QUICK FLASHCARD MODAL -->
+  <div class="modal-overlay hidden" id="quickFlashcardModal">
+    <div class="modal">
+      <div class="modal-title">Quick Create Flashcard</div>
+      <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;width:100%">
+        <div>
+          <label style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);display:block;margin-bottom:6px">FRONT (QUESTION)</label>
+          <input type="text" id="quickFcFrontInput" placeholder="Question or term..." style="width:100%;box-sizing:border-box" spellcheck="false" autocomplete="off" />
+        </div>
+        <div>
+          <label style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);display:block;margin-bottom:6px">BACK (ANSWER)</label>
+          <input type="text" id="quickFcBackInput" placeholder="Answer or definition..." style="width:100%;box-sizing:border-box" spellcheck="false" autocomplete="off" />
+        </div>
+      </div>
+      <div class="modal-btns">
+        <button id="quickFcCancelBtn">Cancel</button>
+        <button id="quickFcSaveBtn" class="btn-accent">Save Card</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOATING SELECTION BADGE -->
+  <button id="notesSelectionBadge" class="selection-badge hidden" style="position: absolute; z-index: 9999; display: none;">🃏 Make Flashcard</button>
+
   <!-- MAIN CONTENT -->
   <main class="content">
 
