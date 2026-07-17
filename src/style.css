@@ -1705,3 +1705,158 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
 .fmt-icon { font-size: 24px; line-height: 1; }
 .fmt-label { font-family: var(--font-display); font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.3; }
 .fmt-ext { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); line-height: 1.4; }
+
+/* ── KEYBOARD SHORTCUT LABELS ── */
+.kbd-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  opacity: 0.55;
+  background: rgba(255,255,255,0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 6px;
+  text-transform: uppercase;
+}
+.theme-light .kbd-sub {
+  background: rgba(0,0,0,0.06);
+}
+
+/* ── FOCUS MODE HIDE SIDEBAR ── */
+.app.sidebar-collapsed .sidebar,
+.app.sidebar-collapsed .sidebar-resizer {
+  display: none !important;
+}
+
+/* ── FLASHCARD STATISTICS ROW ── */
+.fc-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 24px;
+}
+.fc-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 22px;
+  min-width: 110px;
+  transition: border-color 0.15s;
+}
+.fc-stat-card:hover { border-color: var(--border2); }
+.fc-stat-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+.fc-stat-num {
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+/* ── KANBAN BOARD ── */
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  user-select: none;
+}
+.kanban-col {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 480px;
+  transition: border-color 0.2s;
+}
+.kanban-col:hover { border-color: var(--border2); }
+.kanban-col-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border2);
+}
+.kanban-col-color {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.kanban-col-title {
+  font-size: 13px;
+  font-weight: 700;
+  flex: 1;
+}
+.kanban-col-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.kanban-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 380px; /* target area for drop */
+}
+.kanban-cards.dragover {
+  background: rgba(212,245,122,0.02);
+  border-radius: 6px;
+}
+.kanban-card {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: grab;
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kanban-card:hover {
+  border-color: var(--text-muted);
+}
+.kanban-card.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+.kanban-card-text {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.kanban-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  align-items: center;
+}
+.kanban-card-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: all 0.12s;
+}
+.kanban-card-btn:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.kanban-card-btn.danger:hover {
+  color: var(--danger);
+  background: rgba(255,95,95,0.1);
+}
+

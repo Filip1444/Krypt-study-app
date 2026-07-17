@@ -200,6 +200,7 @@
         <header class="page-header">
           <div style="display:flex;align-items:center;gap:12px">
             <button class="back-btn" id="backToFilesBtn">← Back</button>
+            <button class="back-btn" id="focusModeBtn" title="Toggle Focus Mode">⛶ Focus</button>
             <div>
               <div class="page-eyebrow" id="editorSubjectLabel">—</div>
               <div class="editor-filename" id="editorFilename">Untitled</div>
@@ -272,6 +273,9 @@
           <div class="page-eyebrow" id="tasksSubjectLabel">—</div>
           <h1>Tasks</h1>
         </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <button class="btn-accent-outline" id="taskViewToggleBtn" data-view="list">Kanban Board</button>
+        </div>
       </header>
       <div class="tasks-container">
         <div class="task-input-row">
@@ -279,8 +283,38 @@
                  spellcheck="false" autocomplete="off" />
           <button id="addTaskBtn">Add</button>
         </div>
-        <ul class="task-list" id="taskList"></ul>
-        <div class="task-empty" id="taskEmpty">No tasks yet.</div>
+        <div id="taskListView">
+          <ul class="task-list" id="taskList"></ul>
+          <div class="task-empty" id="taskEmpty">No tasks yet.</div>
+        </div>
+        <div id="taskKanbanView" class="hidden">
+          <div class="kanban-board" id="kanbanBoard">
+            <div class="kanban-col" data-status="todo" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'todo')">
+              <div class="kanban-col-header">
+                <span class="kanban-col-color" style="background:#f472b6"></span>
+                <span class="kanban-col-title">To Do</span>
+                <span class="kanban-col-count" id="kanbanCountTodo">0</span>
+              </div>
+              <div class="kanban-cards" id="kanbanCardsTodo" ondragover="allowDrop(event)"></div>
+            </div>
+            <div class="kanban-col" data-status="in_progress" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'in_progress')">
+              <div class="kanban-col-header">
+                <span class="kanban-col-color" style="background:#fb923c"></span>
+                <span class="kanban-col-title">In Progress</span>
+                <span class="kanban-col-count" id="kanbanCountInProgress">0</span>
+              </div>
+              <div class="kanban-cards" id="kanbanCardsInProgress" ondragover="allowDrop(event)"></div>
+            </div>
+            <div class="kanban-col" data-status="done" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'done')">
+              <div class="kanban-col-header">
+                <span class="kanban-col-color" style="background:#d4f57a"></span>
+                <span class="kanban-col-title">Completed</span>
+                <span class="kanban-col-count" id="kanbanCountDone">0</span>
+              </div>
+              <div class="kanban-cards" id="kanbanCardsDone" ondragover="allowDrop(event)"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -326,6 +360,22 @@
           </div>
         </header>
 
+        <!-- Stats row -->
+        <div class="fc-stats-row" id="fcStatsRow" style="display:none">
+          <div class="fc-stat-card">
+            <div class="fc-stat-label">NEW CARDS</div>
+            <div class="fc-stat-num" id="fcCountNew">0</div>
+          </div>
+          <div class="fc-stat-card">
+            <div class="fc-stat-label">DUE FOR REVIEW</div>
+            <div class="fc-stat-num" id="fcCountDue" style="color:var(--accent)">0</div>
+          </div>
+          <div class="fc-stat-card">
+            <div class="fc-stat-label">TOTAL DECK</div>
+            <div class="fc-stat-num" id="fcCountTotal">0</div>
+          </div>
+        </div>
+
         <!-- Add card form -->
         <div class="fc-add-form hidden" id="fcAddForm">
           <div class="fc-form-row">
@@ -361,10 +411,12 @@
           </div>
         </div>
         <div class="fc-review-actions">
-          <button class="fc-flip-btn" id="fcFlipBtn">Flip card</button>
+          <button class="fc-flip-btn" id="fcFlipBtn">Flip card <span class="kbd-sub">Space</span></button>
           <div class="fc-answer-btns hidden" id="fcReviewAnswer">
-            <button class="fc-again-btn" id="fcAgainBtn">✕ Again</button>
-            <button class="fc-gotit-btn" id="fcGotItBtn">✓ Got it</button>
+            <button class="fc-again-btn" id="fcAgainBtn">✕ Again <span class="kbd-sub">1</span></button>
+            <button class="fc-hard-btn" id="fcHardBtn" style="border: 1px solid rgba(251, 146, 60, 0.3); background: rgba(251, 146, 60, 0.15); color: #fb923c; margin-right: 0px;">⚠ Hard <span class="kbd-sub">2</span></button>
+            <button class="fc-gotit-btn" id="fcGotItBtn">✓ Good <span class="kbd-sub">3</span></button>
+            <button class="fc-easy-btn" id="fcEasyBtn" style="border: 1px solid rgba(103, 232, 249, 0.3); background: rgba(103, 232, 249, 0.15); color: #67e8f9; margin-left: 0px;">★ Easy <span class="kbd-sub">4</span></button>
           </div>
         </div>
       </div>

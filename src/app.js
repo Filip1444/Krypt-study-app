@@ -26,6 +26,9 @@ let fcQueue = []
 let fcIdx = 0
 let fcFlipped = false
 
+// Tasks state
+let currentTaskView = 'list'
+
 // multi-file selection
 let selectedFiles = new Set()
 
@@ -154,6 +157,7 @@ async function loadFromDisk() {
     if (typeof data.settings.sidebarWidth !== 'number') data.settings.sidebarWidth = 210
   }
   currentSubject = subjects[0] || 'General'
+  currentTaskView = (data.settings && data.settings.taskView) || 'list'
   // seed colours for any subjects that don't have one yet
   subjects.forEach((s, i) => {
     if (!data.subjectColors[s]) data.subjectColors[s] = SUBJECT_COLORS[i % SUBJECT_COLORS.length]
@@ -270,6 +274,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Notes
   document.getElementById('newFileBtn').addEventListener('click', createNewFile)
   document.getElementById('backToFilesBtn').addEventListener('click', backToFiles)
+  const focusBtn = document.getElementById('focusModeBtn')
+  if (focusBtn) {
+    focusBtn.addEventListener('click', () => {
+      const app = document.querySelector('.app')
+      const isCollapsed = app.classList.toggle('sidebar-collapsed')
+      focusBtn.textContent = isCollapsed ? '⛶ Unfocus' : '⛶ Focus'
+    })
+  }
   document.getElementById('editorFilename').addEventListener('click', () => {
     if (!currentFileId) return
     const file = getFiles(currentSubject).find(f => f.id === currentFileId)
@@ -278,6 +290,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const editor = document.getElementById('notesArea')
   editor.addEventListener('input', onNotesInput)
+  editor.addEventListener('keydown', handleEditorMarkdown)
   editor.addEventListener('keyup', updateToolbarState)
   editor.addEventListener('mouseup', updateToolbarState)
   editor.addEventListener('contextmenu', onEditorContextMenu)
@@ -328,6 +341,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Tasks
   document.getElementById('addTaskBtn').addEventListener('click', addTask)
   document.getElementById('taskInput').addEventListener('keydown', e => { if (e.key === 'Enter') addTask() })
+  const taskToggle = document.getElementById('taskViewToggleBtn')
+  if (taskToggle) {
+    taskToggle.addEventListener('click', () => {
+      currentTaskView = currentTaskView === 'list' ? 'kanban' : 'list'
+      if (data.settings) {
+        data.settings.taskView = currentTaskView
+      }
+      renderTasks()
+      scheduleSave()
+    })
+  }
 
   // Timer
   document.getElementById('startBtn').addEventListener('click', startTimer)
@@ -360,8 +384,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fcSaveBtn').addEventListener('click', saveNewCard)
   document.getElementById('fcStartReviewBtn').addEventListener('click', startReview)
   document.getElementById('fcFlipBtn').addEventListener('click', flipCard)
-  document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(true))
-  document.getElementById('fcAgainBtn').addEventListener('click', () => rateCard(false))
+  document.getElementById('fcAgainBtn').addEventListener('click', () => rateCard(0))
+  document.getElementById('fcHardBtn').addEventListener('click', () => rateCard(1))
+  document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(2))
+  document.getElementById('fcEasyBtn').addEventListener('click', () => rateCard(3))
   document.getElementById('fcBackBtn').addEventListener('click', endReview)
   document.getElementById('fcFrontInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('fcBackInput').focus()
@@ -406,6 +432,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   window.addEventListener('mousemove', onImageResizeMove)
   window.addEventListener('mouseup', onImageResizeUp)
+
+  // Keyboard shortcut listener for Flashcards review
+  document.addEventListener('keyup', e => {
+    const reviewView = document.getElementById('fcReviewView')
+    if (!reviewView || reviewView.classList.contains('hidden')) return
+    
+    // Ignore if typing in inputs
+    if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.isContentEditable) return
+    
+    const flipBtn = document.getElementById('fcFlipBtn')
+    const answers = document.getElementById('fcReviewAnswer')
+    
+    // Space to flip
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault()
+      if (flipBtn && !flipBtn.classList.contains('hidden')) {
+        flipCard()
+      }
+      return
+    }
+    
+    // 1, 2, 3, 4 for rating
+    if (answers && !answers.classList.contains('hidden')) {
+      if (e.key === '1') { rateCard(0); return }
+      if (e.key === '2') { rateCard(1); return }
+      if (e.key === '3') { rateCard(2); return }
+      if (e.key === '4') { rateCard(3); return }
+    }
+  })
 })
 
 // ── SCHEDULE BADGE ──
@@ -786,6 +841,10 @@ function openFile(id) {
 }
 
 function backToFiles() {
+  const app = document.querySelector('.app')
+  if (app) app.classList.remove('sidebar-collapsed')
+  const focusBtn = document.getElementById('focusModeBtn')
+  if (focusBtn) focusBtn.textContent = '⛶ Focus'
   saveCurrentFile()
   showFileList()
   updateDashboard()
@@ -823,14 +882,45 @@ function deleteFile(id) {
 }
 
 // ── NOTES EDITOR ──
+function handleEditorMarkdown(e) {
+  if (e.key !== ' ') return
+  const sel = window.getSelection()
+  if (!sel.rangeCount) return
+  const range = sel.getRangeAt(0)
+  const node = range.startContainer
+  if (node.nodeType !== Node.TEXT_NODE) return
+  
+  const text = node.textContent.substring(0, range.startOffset)
+  
+  if (text === '#') {
+    e.preventDefault()
+    node.textContent = node.textContent.substring(range.startOffset)
+    document.execCommand('formatBlock', false, 'h1')
+  } else if (text === '##') {
+    e.preventDefault()
+    node.textContent = node.textContent.substring(range.startOffset)
+    document.execCommand('formatBlock', false, 'h2')
+  } else if (text === '*' || text === '-') {
+    e.preventDefault()
+    node.textContent = node.textContent.substring(range.startOffset)
+    document.execCommand('insertUnorderedList', false, null)
+  }
+}
+
 let noteSaveTimer = null
 function onNotesInput() {
   saveCurrentFile()
   updateCharCount()
   clearTimeout(noteSaveTimer)
   const ind = document.getElementById('savedIndicator')
-  ind.classList.remove('show')
-  noteSaveTimer = setTimeout(() => ind.classList.add('show'), 800)
+  ind.textContent = 'Saving...'
+  ind.classList.add('show')
+  noteSaveTimer = setTimeout(() => {
+    ind.textContent = 'Saved locally'
+    setTimeout(() => {
+      ind.classList.remove('show')
+    }, 1500)
+  }, 800)
 }
 
 function updateCharCount() {
@@ -865,16 +955,69 @@ function exportNote() {
 function renderTasks() {
   if (!data.tasks[currentSubject]) data.tasks[currentSubject] = []
   const tasks = data.tasks[currentSubject]
-  const list = document.getElementById('taskList')
-  const empty = document.getElementById('taskEmpty')
-  empty.style.display = tasks.length === 0 ? 'block' : 'none'
-  list.innerHTML = tasks.map((t, i) => `
-    <li class="task-item ${t.done ? 'done' : ''}">
-      <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask(${i})">
-      <span>${t.text}</span>
-      <button class="task-delete" onclick="deleteTask(${i})">×</button>
-    </li>
-  `).join('')
+  
+  // Data migration: assign default status, backwards compatible
+  tasks.forEach(t => {
+    if (!t.status) {
+      t.status = t.done ? 'done' : 'todo'
+    }
+  })
+
+  // Sync toggle button
+  const toggleBtn = document.getElementById('taskViewToggleBtn')
+  if (toggleBtn) {
+    toggleBtn.textContent = currentTaskView === 'list' ? 'Kanban Board' : 'List View'
+    toggleBtn.dataset.view = currentTaskView
+  }
+
+  const listWrapper = document.getElementById('taskListView')
+  const kanbanWrapper = document.getElementById('taskKanbanView')
+  if (currentTaskView === 'list') {
+    listWrapper.classList.remove('hidden')
+    kanbanWrapper.classList.add('hidden')
+
+    const list = document.getElementById('taskList')
+    const empty = document.getElementById('taskEmpty')
+    empty.style.display = tasks.length === 0 ? 'block' : 'none'
+    list.innerHTML = tasks.map((t, i) => `
+      <li class="task-item ${t.done ? 'done' : ''}">
+        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask(${i})">
+        <span>${t.text}</span>
+        <button class="task-delete" onclick="deleteTask(${i})">×</button>
+      </li>
+    `).join('')
+  } else {
+    listWrapper.classList.add('hidden')
+    kanbanWrapper.classList.remove('hidden')
+
+    const todoCards = []
+    const progressCards = []
+    const doneCards = []
+
+    tasks.forEach((t, i) => {
+      const cardHtml = `
+        <div class="kanban-card" draggable="true" ondragstart="handleDragStart(event, ${i})">
+          <div class="kanban-card-text">${t.text}</div>
+          <div class="kanban-card-actions">
+            ${t.status !== 'todo' ? `<button class="kanban-card-btn" onclick="moveTask(${i}, -1)" title="Move left">←</button>` : ''}
+            ${t.status !== 'done' ? `<button class="kanban-card-btn" onclick="moveTask(${i}, 1)" title="Move right">→</button>` : ''}
+            <button class="kanban-card-btn danger" onclick="deleteTask(${i})" title="Delete">×</button>
+          </div>
+        </div>
+      `
+      if (t.status === 'todo') todoCards.push(cardHtml)
+      else if (t.status === 'in_progress') progressCards.push(cardHtml)
+      else doneCards.push(cardHtml)
+    })
+
+    document.getElementById('kanbanCardsTodo').innerHTML = todoCards.join('') || '<div class="task-empty" style="padding:10px;text-align:center">Empty</div>'
+    document.getElementById('kanbanCardsInProgress').innerHTML = progressCards.join('') || '<div class="task-empty" style="padding:10px;text-align:center">Empty</div>'
+    document.getElementById('kanbanCardsDone').innerHTML = doneCards.join('') || '<div class="task-empty" style="padding:10px;text-align:center">Empty</div>'
+
+    document.getElementById('kanbanCountTodo').textContent = todoCards.length
+    document.getElementById('kanbanCountInProgress').textContent = progressCards.length
+    document.getElementById('kanbanCountDone').textContent = doneCards.length
+  }
   updateDashboard()
 }
 
@@ -883,14 +1026,16 @@ function addTask() {
   const text = input.value.trim()
   if (!text) { showError('Please enter a task name.'); return }
   if (!data.tasks[currentSubject]) data.tasks[currentSubject] = []
-  data.tasks[currentSubject].push({ text, done: false })
+  data.tasks[currentSubject].push({ text, done: false, status: 'todo' })
   input.value = ''
   renderTasks()
   scheduleSave()
 }
 
 function toggleTask(i) {
-  data.tasks[currentSubject][i].done = !data.tasks[currentSubject][i].done
+  const task = data.tasks[currentSubject][i]
+  task.done = !task.done
+  task.status = task.done ? 'done' : 'todo'
   renderTasks(); scheduleSave()
 }
 
@@ -898,6 +1043,53 @@ function deleteTask(i) {
   data.tasks[currentSubject].splice(i, 1)
   renderTasks(); scheduleSave()
 }
+
+function moveTask(i, dir) {
+  const statuses = ['todo', 'in_progress', 'done']
+  const task = data.tasks[currentSubject][i]
+  let currentIdx = statuses.indexOf(task.status)
+  if (currentIdx === -1) currentIdx = task.done ? 2 : 0
+  const targetIdx = Math.max(0, Math.min(2, currentIdx + dir))
+  task.status = statuses[targetIdx]
+  task.done = (task.status === 'done')
+  renderTasks()
+  scheduleSave()
+}
+
+let draggedTaskIndex = null
+function handleDragStart(e, index) {
+  draggedTaskIndex = index
+  e.dataTransfer.setData('text/plain', index)
+}
+function allowDrop(e) {
+  e.preventDefault()
+  const col = e.currentTarget
+  if (col) col.classList.add('dragover')
+}
+function handleDrop(e, status) {
+  e.preventDefault()
+  document.querySelectorAll('.kanban-cards').forEach(el => el.classList.remove('dragover'))
+  const idx = parseInt(e.dataTransfer.getData('text/plain') || draggedTaskIndex, 10)
+  if (isNaN(idx)) return
+  const task = data.tasks[currentSubject][idx]
+  if (task) {
+    task.status = status
+    task.done = (status === 'done')
+    renderTasks()
+    scheduleSave()
+  }
+  draggedTaskIndex = null
+}
+
+document.addEventListener('dragleave', e => {
+  const col = e.target.closest('.kanban-cards')
+  if (col) col.classList.remove('dragover')
+})
+
+window.moveTask = moveTask
+window.handleDragStart = handleDragStart
+window.allowDrop = allowDrop
+window.handleDrop = handleDrop
 
 // ── TIMER ──
 // ── FORMAT AT CURSOR (Word-style, pure DOM) ──
@@ -1108,17 +1300,21 @@ function renderFlashcardList() {
         </div>
       </div>
       <div class="fc-review-actions">
-        <button class="fc-flip-btn" id="fcFlipBtn">Flip card</button>
+        <button class="fc-flip-btn" id="fcFlipBtn">Flip card <span class="kbd-sub">Space</span></button>
         <div class="fc-answer-btns hidden" id="fcReviewAnswer">
-          <button class="fc-again-btn" id="fcAgainBtn">✕ Again</button>
-          <button class="fc-gotit-btn" id="fcGotItBtn">✓ Got it</button>
+          <button class="fc-again-btn" id="fcAgainBtn">✕ Again <span class="kbd-sub">1</span></button>
+          <button class="fc-hard-btn" id="fcHardBtn" style="border: 1px solid rgba(251, 146, 60, 0.3); background: rgba(251, 146, 60, 0.15); color: #fb923c; margin-right: 0px;">⚠ Hard <span class="kbd-sub">2</span></button>
+          <button class="fc-gotit-btn" id="fcGotItBtn">✓ Good <span class="kbd-sub">3</span></button>
+          <button class="fc-easy-btn" id="fcEasyBtn" style="border: 1px solid rgba(103, 232, 249, 0.3); background: rgba(103, 232, 249, 0.15); color: #67e8f9; margin-left: 0px;">★ Easy <span class="kbd-sub">4</span></button>
         </div>
       </div>
     `
     document.getElementById('fcBackBtn').addEventListener('click', endReview)
     document.getElementById('fcFlipBtn').addEventListener('click', flipCard)
-    document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(true))
-    document.getElementById('fcAgainBtn').addEventListener('click', () => rateCard(false))
+    document.getElementById('fcAgainBtn').addEventListener('click', () => rateCard(0))
+    document.getElementById('fcHardBtn').addEventListener('click', () => rateCard(1))
+    document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(2))
+    document.getElementById('fcEasyBtn').addEventListener('click', () => rateCard(3))
   }
 
   document.getElementById('fcListView').classList.remove('hidden')
@@ -1126,10 +1322,23 @@ function renderFlashcardList() {
   updateSubjectLabels()
 
   const cards = getCards(currentSubject)
+  
+  // Render stats row
+  const statsRow = document.getElementById('fcStatsRow')
+  const dueCount = cards.filter(c => !c.due || c.due <= Date.now()).length
+  const newCount = cards.filter(c => c.interval === 1 && c.ease === 2.5).length
+  if (cards.length > 0) {
+    statsRow.style.display = 'grid'
+    document.getElementById('fcCountTotal').textContent = cards.length
+    document.getElementById('fcCountDue').textContent = dueCount
+    document.getElementById('fcCountNew').textContent = newCount
+  } else {
+    statsRow.style.display = 'none'
+  }
+
   const list = document.getElementById('fcCardList')
   const empty = document.getElementById('fcEmpty')
   const reviewBtn = document.getElementById('fcStartReviewBtn')
-  const dueCount = cards.filter(c => !c.due || c.due <= Date.now()).length
 
   empty.style.display = cards.length === 0 ? 'block' : 'none'
   reviewBtn.style.display = cards.length === 0 ? 'none' : 'inline-block'
