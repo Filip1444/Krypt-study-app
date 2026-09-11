@@ -1,5 +1,15 @@
 const { ipcRenderer } = require('electron')
 
+// ── GLOBAL ERROR SAFETY NET ──
+window.addEventListener('error', e => {
+  console.error('Unhandled error:', e.error || e.message)
+  showError('Something went wrong. Your latest change may not be saved.')
+})
+window.addEventListener('unhandledrejection', e => {
+  console.error('Unhandled promise rejection:', e.reason)
+  showError('Something went wrong. Your latest change may not be saved.')
+})
+
 // ── STATE ──
 let currentSubject = null
 let subjects = ['Mathematics', 'Physics', 'Chemistry', 'History', 'Literature']
@@ -8,7 +18,6 @@ let ctxTargetSubject = null
 let ctxTargetFileId = null
 let modalConfirmCallback = null
 let confirmDeleteCallback = null
-let formatModalCallback = null
 let selectedImageElement = null
 let sidebarResizeState = null
 let selectedImageWrap = null
@@ -32,11 +41,19 @@ let currentTaskView = 'list'
 // multi-file selection
 let selectedFiles = new Set()
 
+// grouping / undo state
+let activeNoteGroup = 'All'
+let activeFcGroup = 'All'
+let lastDeletedAction = null
+let undoToastTimer = null
+
 const SUBJECT_COLORS = ['#d4f57a','#67e8f9','#c084fc','#fb923c','#f472b6','#34d399','#facc15','#f87171']
 
 // data shape:
 // streak: { count, lastDate, history: { 'YYYY-MM-DD': true } }
-// flashcards: { [subject]: [ { id, front, back, due, interval, ease } ] }
+// flashcards: { [subject]: [ { id, front, back, due, interval, ease, group } ] }
+// notes: { [subject]: [ { id, name, content, updatedAt, group } ] }
+// reviewLog: { 'YYYY-MM-DD': { total, correct } }
 // subjectColors: { [subject]: color }
 const data = {
   notes: {},
@@ -46,6 +63,7 @@ const data = {
   streak: { count: 0, lastDate: null, history: {} },
   grades: {},
   subjectColors: {},
+  reviewLog: {},
   settings: { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210 }
 }
 
@@ -143,7 +161,12 @@ function renderSidebarStreak() {
 
 // ── PERSISTENCE ──
 async function loadFromDisk() {
-  const saved = await ipcRenderer.invoke('load-data')
+  let saved = null
+  try {
+    saved = await ipcRenderer.invoke('load-data')
+  } catch (err) {
+    console.error('loadFromDisk error:', err)
+  }
   if (saved) {
     if (saved.subjects) subjects = saved.subjects
     if (saved.notes) Object.assign(data.notes, saved.notes)
@@ -153,6 +176,7 @@ async function loadFromDisk() {
     if (saved.streak) Object.assign(data.streak, saved.streak)
     if (saved.grades) Object.assign(data.grades, saved.grades)
     if (saved.subjectColors) Object.assign(data.subjectColors, saved.subjectColors)
+    if (saved.reviewLog) Object.assign(data.reviewLog, saved.reviewLog)
     if (saved.settings) Object.assign(data.settings, saved.settings)
     if (typeof data.settings.sidebarWidth !== 'number') data.settings.sidebarWidth = 210
   }
@@ -170,18 +194,26 @@ async function loadFromDisk() {
 let diskSaveTimer = null
 function scheduleSave() {
   clearTimeout(diskSaveTimer)
-  diskSaveTimer = setTimeout(() =>
-    ipcRenderer.invoke('save-data', {
-      subjects,
-      notes: data.notes,
-      tasks: data.tasks,
-      schedule: data.schedule,
-      flashcards: data.flashcards,
-      streak: data.streak,
-      grades: data.grades,
-      subjectColors: data.subjectColors,
-      settings: data.settings
-    }), 600)
+  diskSaveTimer = setTimeout(async () => {
+    try {
+      const ok = await ipcRenderer.invoke('save-data', {
+        subjects,
+        notes: data.notes,
+        tasks: data.tasks,
+        schedule: data.schedule,
+        flashcards: data.flashcards,
+        streak: data.streak,
+        grades: data.grades,
+        subjectColors: data.subjectColors,
+        reviewLog: data.reviewLog,
+        settings: data.settings
+      })
+      if (!ok) showError('Failed to save — check disk space or permissions.')
+    } catch (err) {
+      console.error('scheduleSave error:', err)
+      showError('Failed to save — check disk space or permissions.')
+    }
+  }, 600)
 }
 
 // ── BOOT ──
@@ -204,24 +236,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeConfirm()
   })
 
+  // Undo toast
+  document.getElementById('undoToastBtn').addEventListener('click', () => {
+    if (lastDeletedAction && lastDeletedAction.restore) lastDeletedAction.restore()
+    hideUndoToast()
+  })
+
+  // Keyboard shortcuts modal
+  document.getElementById('shortcutsBtn').addEventListener('click', () => {
+    document.getElementById('shortcutsModal').classList.remove('hidden')
+  })
+  document.getElementById('shortcutsCloseBtn').addEventListener('click', () => {
+    document.getElementById('shortcutsModal').classList.add('hidden')
+  })
+
   // Note search
   document.getElementById('notesSearch').addEventListener('input', e => renderFileList(e.target.value))
+  document.getElementById('notesSearchAll').addEventListener('change', () => renderFileList(document.getElementById('notesSearch').value))
 
   // Multi-file selection
   document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll)
-  document.getElementById('exportSelectedBtn').addEventListener('click', exportSelectedFiles)
   document.getElementById('deleteSelectedBtn').addEventListener('click', deleteSelectedFiles)
 
   // Nav
   document.querySelectorAll('.nav-btn').forEach(btn =>
-    btn.addEventListener('click', () => {
-      if (btn.id === 'settingsGearBtn') {
-        document.getElementById('settingsPanel').classList.toggle('hidden')
-        renderSettingsPanel()
-        return
-      }
-      switchPage(btn.dataset.page)
-    })
+      btn.addEventListener('click', () => {
+        if (btn.id === 'settingsGearBtn') {
+          document.getElementById('settingsPanel').classList.toggle('hidden')
+          renderSettingsPanel()
+          return
+        }
+        switchPage(btn.dataset.page)
+      })
   )
 
   // Add subject
@@ -247,6 +293,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     hideAllMenus()
     const file = getFiles(currentSubject).find(f => f.id === ctxTargetFileId)
     if (file) openModal('Rename File', file.name, newName => renameFile(ctxTargetFileId, newName))
+  })
+  document.getElementById('fileCtxMoveGroup').addEventListener('click', () => {
+    hideAllMenus()
+    const file = getFiles(currentSubject).find(f => f.id === ctxTargetFileId)
+    if (file) openModal('Move to Group', file.group || '', newGroup => moveFileToGroup(ctxTargetFileId, newGroup))
   })
   document.getElementById('fileCtxDelete').addEventListener('click', () => {
     hideAllMenus()
@@ -336,7 +387,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.execCommand('redo', false, null)
     updateToolbarState()
   })
-  document.getElementById('exportBtn').addEventListener('click', exportNote)
+
 
   // Tasks
   document.getElementById('addTaskBtn').addEventListener('click', addTask)
@@ -371,11 +422,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Schedule
   document.getElementById('addTestBtn').addEventListener('click', () =>
-    document.getElementById('addTestForm').classList.toggle('hidden')
+      document.getElementById('addTestForm').classList.toggle('hidden')
   )
   document.getElementById('confirmTest').addEventListener('click', addTest)
   ;['testSubject', 'testName', 'testDate'].forEach(id =>
-    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') addTest() })
+      document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') addTest() })
   )
 
   // Flashcards
@@ -383,11 +434,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fcCancelBtn').addEventListener('click', hideCardForm)
   document.getElementById('fcSaveBtn').addEventListener('click', saveNewCard)
   document.getElementById('fcStartReviewBtn').addEventListener('click', startReview)
+  document.getElementById('fcReviewAllBtn').addEventListener('click', startReviewAll)
   document.getElementById('fcFlipBtn').addEventListener('click', flipCard)
   document.getElementById('fcAgainBtn').addEventListener('click', () => rateCard(0))
-  document.getElementById('fcHardBtn').addEventListener('click', () => rateCard(1))
-  document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(2))
-  document.getElementById('fcEasyBtn').addEventListener('click', () => rateCard(3))
+  document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(1))
   document.getElementById('fcBackBtn').addEventListener('click', endReview)
   document.getElementById('fcFrontInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') document.getElementById('fcBackInput').focus()
@@ -395,6 +445,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fcBackInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') saveNewCard()
   })
+  const fcGroupInputEl = document.getElementById('fcGroupInput')
+  if (fcGroupInputEl) fcGroupInputEl.addEventListener('keydown', e => { if (e.key === 'Enter') saveNewCard() })
 
   // Grades
   document.getElementById('gradeAddBtn').addEventListener('click', addGrade)
@@ -412,16 +464,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   })
 
-  // Format modal
-  document.getElementById('fmtCancelBtn').addEventListener('click', closeFormatModal)
-  document.querySelectorAll('.fmt-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const fmt = btn.dataset.fmt
-      closeFormatModal()
-      if (formatModalCallback) formatModalCallback(fmt)
-    })
-  })
-
   // Accent color picker
   document.getElementById('accentPicker').addEventListener('input', e => setAccent(e.target.value))
   initSidebarResize()
@@ -437,13 +479,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('keyup', e => {
     const reviewView = document.getElementById('fcReviewView')
     if (!reviewView || reviewView.classList.contains('hidden')) return
-    
+
     // Ignore if typing in inputs
     if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.isContentEditable) return
-    
+
     const flipBtn = document.getElementById('fcFlipBtn')
     const answers = document.getElementById('fcReviewAnswer')
-    
+
     // Space to flip
     if (e.key === ' ' || e.code === 'Space') {
       e.preventDefault()
@@ -452,13 +494,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       return
     }
-    
-    // 1, 2, 3, 4 for rating
+
+    // 1, 2 for rating — Again / Good
     if (answers && !answers.classList.contains('hidden')) {
       if (e.key === '1') { rateCard(0); return }
       if (e.key === '2') { rateCard(1); return }
-      if (e.key === '3') { rateCard(2); return }
-      if (e.key === '4') { rateCard(3); return }
     }
   })
 })
@@ -554,19 +594,21 @@ function renderSubjects() {
   `).join('')
 
   list.querySelectorAll('.subject-btn').forEach(btn =>
-    btn.addEventListener('click', () => selectSubject(btn.dataset.subject))
+      btn.addEventListener('click', () => selectSubject(btn.dataset.subject))
   )
   list.querySelectorAll('.subject-ctx-btn').forEach(btn =>
-    btn.addEventListener('click', e => { e.stopPropagation(); showCtxMenu(e, 'ctxMenu', () => { ctxTargetSubject = btn.dataset.subject }) })
+      btn.addEventListener('click', e => { e.stopPropagation(); showCtxMenu(e, 'ctxMenu', () => { ctxTargetSubject = btn.dataset.subject }) })
   )
   list.querySelectorAll('.subject-row').forEach(row =>
-    row.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); showCtxMenu(e, 'ctxMenu', () => { ctxTargetSubject = row.querySelector('.subject-btn').dataset.subject }) })
+      row.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); showCtxMenu(e, 'ctxMenu', () => { ctxTargetSubject = row.querySelector('.subject-btn').dataset.subject }) })
   )
 }
 
 function selectSubject(name) {
   currentSubject = name
   currentFileId = null
+  activeNoteGroup = 'All'
+  activeFcGroup = 'All'
   renderSubjects()
   updateSubjectLabels()
   showFileList()
@@ -596,7 +638,8 @@ function addSubject() {
 }
 
 function renameSubject(oldName, newName) {
-  if (!newName || newName === oldName || subjects.includes(newName)) return
+  if (!newName || newName === oldName) return
+  if (subjects.includes(newName)) { showError(`"${newName}" already exists.`); return }
   const idx = subjects.indexOf(oldName)
   if (idx === -1) return
   subjects[idx] = newName
@@ -612,8 +655,13 @@ function renameSubject(oldName, newName) {
 }
 
 function deleteSubject(name) {
-  if (subjects.length <= 1) return
+  if (subjects.length <= 1) { showError('You need at least one subject.'); return }
   openConfirm('Delete Subject', `Delete "${name}" and all its notes, tasks, flashcards and grades? This cannot be undone.`, () => {
+    const idx = subjects.indexOf(name)
+    const snapshot = {
+      notes: data.notes[name], tasks: data.tasks[name], flashcards: data.flashcards[name],
+      grades: data.grades[name], subjectColors: data.subjectColors[name]
+    }
     subjects = subjects.filter(s => s !== name)
     delete data.notes[name]
     delete data.tasks[name]
@@ -623,6 +671,16 @@ function deleteSubject(name) {
     if (currentSubject === name) selectSubject(subjects[0])
     else renderSubjects()
     scheduleSave()
+    showUndoToast(`Subject "${name}" deleted`, () => {
+      subjects.splice(Math.min(idx, subjects.length), 0, name)
+      if (snapshot.notes) data.notes[name] = snapshot.notes
+      if (snapshot.tasks) data.tasks[name] = snapshot.tasks
+      if (snapshot.flashcards) data.flashcards[name] = snapshot.flashcards
+      if (snapshot.grades) data.grades[name] = snapshot.grades
+      if (snapshot.subjectColors) data.subjectColors[name] = snapshot.subjectColors
+      renderSubjects()
+      scheduleSave()
+    })
   })
 }
 
@@ -681,15 +739,34 @@ function closeConfirm() {
   confirmDeleteCallback = null
 }
 
-function openFormatModal(onPick) {
-  formatModalCallback = onPick
-  document.getElementById('formatModal').classList.remove('hidden')
+function getNoteGroups(subject) {
+  const groups = new Set()
+  getFiles(subject).forEach(f => groups.add(f.group || 'General'))
+  return [...groups].sort()
 }
 
-function closeFormatModal() {
-  document.getElementById('formatModal').classList.add('hidden')
-  formatModalCallback = null
+function renderNoteGroupChips() {
+  const row = document.getElementById('noteGroupChips')
+  const groups = getNoteGroups(currentSubject)
+  const chips = ['All', ...groups]
+  row.innerHTML = chips.map(g =>
+      `<button class="group-chip ${activeNoteGroup === g ? 'active' : ''}" data-group="${g}">${g}</button>`
+  ).join('') + `<button class="group-chip group-chip-add" id="noteGroupAddBtn">+ New Group</button>`
+
+  row.querySelectorAll('.group-chip[data-group]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeNoteGroup = btn.dataset.group
+      renderFileList(document.getElementById('notesSearch').value)
+    })
+  })
+  document.getElementById('noteGroupAddBtn').addEventListener('click', () => {
+    openModal('New Group Name', '', name => {
+      activeNoteGroup = name
+      renderFileList()
+    })
+  })
 }
+
 function showFileList() {
   document.getElementById('notesFileView').classList.remove('hidden')
   document.getElementById('notesEditorView').classList.add('hidden')
@@ -699,14 +776,57 @@ function showFileList() {
   updateSubjectLabels()
 }
 
+function fileMatchesQuery(f, q) {
+  return f.name.toLowerCase().includes(q) || stripHtml(f.content).toLowerCase().includes(q)
+}
+
 function renderFileList(searchQuery = '') {
-  const allFiles = getFiles(currentSubject)
   const q = searchQuery.toLowerCase().trim()
-  const files = q
-    ? allFiles.filter(f => f.name.toLowerCase().includes(q) || stripHtml(f.content).toLowerCase().includes(q))
-    : allFiles
+  const searchAll = document.getElementById('notesSearchAll').checked
+
+  renderNoteGroupChips()
+
   const list = document.getElementById('fileList')
   const empty = document.getElementById('fileListEmpty')
+
+  // Global search across every subject — only kicks in when there's a query
+  if (q && searchAll) {
+    const results = []
+    subjects.forEach(subject => {
+      getFiles(subject).forEach(f => {
+        if (fileMatchesQuery(f, q)) results.push({ ...f, __subject: subject })
+      })
+    })
+    empty.style.display = results.length === 0 ? 'block' : 'none'
+    empty.textContent = 'No files match your search in any subject.'
+    list.innerHTML = results.map(f => {
+      const preview = stripHtml(f.content).slice(0, 80).trim() || 'Empty file'
+      const date = f.updatedAt ? new Date(f.updatedAt).toLocaleDateString() : ''
+      return `
+        <div class="file-item" data-id="${f.id}" data-subject="${f.__subject}">
+          <div class="file-icon">📄</div>
+          <div class="file-info">
+            <div class="file-name">${f.name} <span class="file-group-tag">${f.__subject}</span></div>
+            <div class="file-meta">${preview}${date ? ' · ' + date : ''}</div>
+          </div>
+        </div>
+      `
+    }).join('')
+    list.querySelectorAll('.file-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const subject = item.dataset.subject
+        if (subject !== currentSubject) selectSubject(subject)
+        openFile(item.dataset.id)
+      })
+    })
+    document.getElementById('fileSelectionBar').classList.add('hidden')
+    return
+  }
+
+  const allFiles = getFiles(currentSubject)
+  let files = q ? allFiles.filter(f => fileMatchesQuery(f, q)) : allFiles
+  if (activeNoteGroup !== 'All') files = files.filter(f => (f.group || 'General') === activeNoteGroup)
+
   empty.style.display = files.length === 0 ? 'block' : 'none'
   empty.textContent = q && allFiles.length > 0 ? 'No files match your search.' : 'No files yet. Create one above.'
 
@@ -719,7 +839,7 @@ function renderFileList(searchQuery = '') {
         <input type="checkbox" class="file-checkbox" data-id="${f.id}" ${checked ? 'checked' : ''}>
         <div class="file-icon">📄</div>
         <div class="file-info">
-          <div class="file-name">${f.name}</div>
+          <div class="file-name">${f.name} <span class="file-group-tag">${f.group || 'General'}</span></div>
           <div class="file-meta">${preview}${date ? ' · ' + date : ''}</div>
         </div>
         <button class="file-ctx-btn" data-id="${f.id}" title="Options">⋯</button>
@@ -756,6 +876,14 @@ function renderFileList(searchQuery = '') {
   updateSelectionBar(files)
 }
 
+function moveFileToGroup(id, newGroup) {
+  const file = getFiles(currentSubject).find(f => f.id === id)
+  if (!file) return
+  file.group = newGroup || 'General'
+  renderFileList(document.getElementById('notesSearch').value)
+  scheduleSave()
+}
+
 function updateSelectionBar(files) {
   const bar = document.getElementById('fileSelectionBar')
   // remove any selected IDs that no longer exist
@@ -774,7 +902,7 @@ function updateSelectionBar(files) {
 function toggleSelectAll() {
   const files = getFiles(currentSubject)
   const q = document.getElementById('notesSearch').value.toLowerCase().trim()
-  const visible = q ? files.filter(f => f.name.toLowerCase().includes(q) || stripHtml(f.content).toLowerCase().includes(q)) : files
+  const visible = q ? files.filter(f => fileMatchesQuery(f, q)) : files
   const allSelected = visible.every(f => selectedFiles.has(f.id))
   if (allSelected) visible.forEach(f => selectedFiles.delete(f.id))
   else visible.forEach(f => selectedFiles.add(f.id))
@@ -786,28 +914,24 @@ function deleteSelectedFiles() {
   if (!files.length) return
   const n = files.length
   openConfirm(
-    'Delete Files',
-    `Delete ${n} file${n !== 1 ? 's' : ''}? This cannot be undone.`,
-    () => {
-      files.forEach(f => selectedFiles.delete(f.id))
-      data.notes[currentSubject] = getFiles(currentSubject).filter(f => !files.find(d => d.id === f.id))
-      renderFileList()
-      updateDashboard()
-      scheduleSave()
-    }
+      'Delete Files',
+      `Delete ${n} file${n !== 1 ? 's' : ''}? This cannot be undone.`,
+      () => {
+        const subject = currentSubject
+        const removedIds = new Set(files.map(f => f.id))
+        files.forEach(f => selectedFiles.delete(f.id))
+        data.notes[subject] = getFiles(subject).filter(f => !removedIds.has(f.id))
+        renderFileList()
+        updateDashboard()
+        scheduleSave()
+        showUndoToast(`${n} file${n !== 1 ? 's' : ''} deleted`, () => {
+          data.notes[subject] = [...files, ...getFiles(subject)]
+          if (currentSubject === subject) renderFileList()
+          updateDashboard()
+          scheduleSave()
+        })
+      }
   )
-}
-
-function exportSelectedFiles() {
-  const files = getFiles(currentSubject).filter(f => selectedFiles.has(f.id))
-  if (!files.length) return
-  openFormatModal(format => {
-    ipcRenderer.send('export-folder', {
-      format,
-      subject: currentSubject,
-      files: files.map(f => ({ name: f.name, plainText: stripHtml(f.content), htmlContent: f.content }))
-    })
-  })
 }
 
 function stripHtml(html) {
@@ -819,7 +943,8 @@ function stripHtml(html) {
 function createNewFile() {
   const files = getFiles(currentSubject)
   const name = 'Note ' + (files.length + 1)
-  const file = { id: uid(), name, content: '', updatedAt: Date.now() }
+  const group = activeNoteGroup !== 'All' ? activeNoteGroup : 'General'
+  const file = { id: uid(), name, content: '', updatedAt: Date.now(), group }
   files.unshift(file)
   scheduleSave()
   openFile(file.id)
@@ -861,7 +986,8 @@ function saveCurrentFile() {
 
 function renameFile(id, newName) {
   const file = getFiles(currentSubject).find(f => f.id === id)
-  if (!file || !newName) return
+  if (!file) return
+  if (!newName) { showError('File name cannot be empty.'); return }
   file.name = newName
   if (currentFileId === id) document.getElementById('editorFilename').textContent = newName
   renderFileList()
@@ -872,12 +998,22 @@ function deleteFile(id) {
   const file = getFiles(currentSubject).find(f => f.id === id)
   const name = file ? file.name : 'this file'
   openConfirm('Delete File', `Delete "${name}"? This cannot be undone.`, () => {
+    const subject = currentSubject
+    const idx = getFiles(subject).findIndex(f => f.id === id)
+    const removed = idx !== -1 ? getFiles(subject)[idx] : null
     selectedFiles.delete(id)
-    data.notes[currentSubject] = getFiles(currentSubject).filter(f => f.id !== id)
+    data.notes[subject] = getFiles(subject).filter(f => f.id !== id)
     if (currentFileId === id) showFileList()
     else renderFileList()
     updateDashboard()
     scheduleSave()
+    if (removed) {
+      showUndoToast(`"${name}" deleted`, () => {
+        getFiles(subject).splice(Math.min(idx, getFiles(subject).length), 0, removed)
+        if (currentSubject === subject) { showFileList(); updateDashboard() }
+        scheduleSave()
+      })
+    }
   })
 }
 
@@ -889,9 +1025,9 @@ function handleEditorMarkdown(e) {
   const range = sel.getRangeAt(0)
   const node = range.startContainer
   if (node.nodeType !== Node.TEXT_NODE) return
-  
+
   const text = node.textContent.substring(0, range.startOffset)
-  
+
   if (text === '#') {
     e.preventDefault()
     node.textContent = node.textContent.substring(range.startOffset)
@@ -910,37 +1046,37 @@ function handleEditorMarkdown(e) {
 function handleNoteSelection(e) {
   const badge = document.getElementById('notesSelectionBadge')
   if (!badge) return
-  
+
   setTimeout(() => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) {
       hideSelectionBadge()
       return
     }
-    
+
     const range = sel.getRangeAt(0)
     const text = sel.toString().trim()
-    
+
     // Verify selection is within notesArea
     const notesArea = document.getElementById('notesArea')
     if (!notesArea || !notesArea.contains(range.commonAncestorContainer)) {
       hideSelectionBadge()
       return
     }
-    
+
     if (text.length < 2 || text.length > 150) {
       hideSelectionBadge()
       return
     }
-    
+
     const rect = range.getBoundingClientRect()
-    
+
     badge.style.display = 'block'
     badge.classList.remove('hidden')
-    
+
     const badgeWidth = badge.offsetWidth || 120
     const badgeHeight = badge.offsetHeight || 30
-    
+
     badge.style.left = `${window.scrollX + rect.left + (rect.width / 2) - (badgeWidth / 2)}px`
     badge.style.top = `${window.scrollY + rect.top - badgeHeight - 8}px`
   }, 50)
@@ -961,17 +1097,17 @@ function hideSelectionBadge() {
 function openQuickFlashcardModal() {
   const sel = window.getSelection()
   const text = sel ? sel.toString().trim() : ''
-  
+
   const modal = document.getElementById('quickFlashcardModal')
   const frontInput = document.getElementById('quickFcFrontInput')
   const backInput = document.getElementById('quickFcBackInput')
-  
+
   frontInput.value = text
   backInput.value = ''
-  
+
   modal.classList.remove('hidden')
   hideSelectionBadge()
-  
+
   setTimeout(() => {
     backInput.focus()
   }, 100)
@@ -986,12 +1122,12 @@ function closeQuickFlashcardModal() {
 function saveQuickFlashcard() {
   const front = document.getElementById('quickFcFrontInput').value.trim()
   const back = document.getElementById('quickFcBackInput').value.trim()
-  
+
   if (!front || !back) {
     showError('Please fill in both front and back fields.')
     return
   }
-  
+
   if (!data.flashcards[currentSubject]) data.flashcards[currentSubject] = []
   data.flashcards[currentSubject].push({
     id: 'fc-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
@@ -1001,7 +1137,7 @@ function saveQuickFlashcard() {
     interval: 1,
     due: Date.now()
   })
-  
+
   scheduleSave()
   closeQuickFlashcardModal()
   showError('Flashcard created! 🃏')
@@ -1036,27 +1172,34 @@ function updateToolbarState() {
   })
 }
 
-function exportNote() {
-  const file = currentFileId ? getFiles(currentSubject).find(f => f.id === currentFileId) : null
-  const name = file ? file.name : currentSubject
-  const editor = document.getElementById('notesArea')
-  openFormatModal(format => {
-    ipcRenderer.send('export-notes', {
-      format,
-      subject: name,
-      noteName: name,
-      subjectName: currentSubject,
-      plainText: editor.innerText || '',
-      htmlContent: editor.innerHTML
-    })
-  })
-}
+
 
 // ── TASKS ──
+function checkRecurringTasks(subject) {
+  const tasks = data.tasks[subject]
+  if (!tasks) return
+  const now = Date.now()
+  const DAY = 24 * 60 * 60 * 1000
+  let changed = false
+  tasks.forEach(t => {
+    if (!t.recurring || !t.done || !t.completedAt) return
+    const elapsed = now - t.completedAt
+    const threshold = t.recurring === 'weekly' ? 7 * DAY : DAY
+    if (elapsed >= threshold) {
+      t.done = false
+      t.status = 'todo'
+      t.completedAt = null
+      changed = true
+    }
+  })
+  if (changed) scheduleSave()
+}
+
 function renderTasks() {
   if (!data.tasks[currentSubject]) data.tasks[currentSubject] = []
+  checkRecurringTasks(currentSubject)
   const tasks = data.tasks[currentSubject]
-  
+
   // Data migration: assign default status, backwards compatible
   tasks.forEach(t => {
     if (!t.status) {
@@ -1071,6 +1214,8 @@ function renderTasks() {
     toggleBtn.dataset.view = currentTaskView
   }
 
+  const recurLabel = t => t.recurring === 'daily' ? '<span class="task-recur-badge">↻ daily</span>' : t.recurring === 'weekly' ? '<span class="task-recur-badge">↻ weekly</span>' : ''
+
   const listWrapper = document.getElementById('taskListView')
   const kanbanWrapper = document.getElementById('taskKanbanView')
   if (currentTaskView === 'list') {
@@ -1083,7 +1228,7 @@ function renderTasks() {
     list.innerHTML = tasks.map((t, i) => `
       <li class="task-item ${t.done ? 'done' : ''}">
         <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask(${i})">
-        <span>${t.text}</span>
+        <span>${t.text}${recurLabel(t)}</span>
         <button class="task-delete" onclick="deleteTask(${i})">×</button>
       </li>
     `).join('')
@@ -1098,7 +1243,7 @@ function renderTasks() {
     tasks.forEach((t, i) => {
       const cardHtml = `
         <div class="kanban-card" draggable="true" ondragstart="handleDragStart(event, ${i})">
-          <div class="kanban-card-text">${t.text}</div>
+          <div class="kanban-card-text">${t.text}${recurLabel(t)}</div>
           <div class="kanban-card-actions">
             ${t.status !== 'todo' ? `<button class="kanban-card-btn" onclick="moveTask(${i}, -1)" title="Move left">←</button>` : ''}
             ${t.status !== 'done' ? `<button class="kanban-card-btn" onclick="moveTask(${i}, 1)" title="Move right">→</button>` : ''}
@@ -1126,9 +1271,12 @@ function addTask() {
   const input = document.getElementById('taskInput')
   const text = input.value.trim()
   if (!text) { showError('Please enter a task name.'); return }
+  const recurSelect = document.getElementById('taskRecurring')
+  const recurring = recurSelect ? recurSelect.value || null : null
   if (!data.tasks[currentSubject]) data.tasks[currentSubject] = []
-  data.tasks[currentSubject].push({ text, done: false, status: 'todo' })
+  data.tasks[currentSubject].push({ text, done: false, status: 'todo', recurring, completedAt: null })
   input.value = ''
+  if (recurSelect) recurSelect.value = ''
   renderTasks()
   scheduleSave()
 }
@@ -1137,12 +1285,22 @@ function toggleTask(i) {
   const task = data.tasks[currentSubject][i]
   task.done = !task.done
   task.status = task.done ? 'done' : 'todo'
+  task.completedAt = task.done ? Date.now() : null
   renderTasks(); scheduleSave()
 }
 
 function deleteTask(i) {
-  data.tasks[currentSubject].splice(i, 1)
+  const subject = currentSubject
+  const removed = data.tasks[subject][i]
+  data.tasks[subject].splice(i, 1)
   renderTasks(); scheduleSave()
+  if (removed) {
+    showUndoToast(`Task deleted`, () => {
+      data.tasks[subject].splice(Math.min(i, data.tasks[subject].length), 0, removed)
+      if (currentSubject === subject) renderTasks()
+      scheduleSave()
+    })
+  }
 }
 
 function moveTask(i, dir) {
@@ -1153,6 +1311,7 @@ function moveTask(i, dir) {
   const targetIdx = Math.max(0, Math.min(2, currentIdx + dir))
   task.status = statuses[targetIdx]
   task.done = (task.status === 'done')
+  task.completedAt = task.done ? Date.now() : null
   renderTasks()
   scheduleSave()
 }
@@ -1176,6 +1335,7 @@ function handleDrop(e, status) {
   if (task) {
     task.status = status
     task.done = (status === 'done')
+    task.completedAt = task.done ? Date.now() : null
     renderTasks()
     scheduleSave()
   }
@@ -1281,7 +1441,7 @@ function updateTimerDisplay() {
 }
 function updateTimerProgress() {
   document.getElementById('timerProgress').style.strokeDashoffset =
-    (2 * Math.PI * 88) * (1 - timerSeconds / timerTotal)
+      (2 * Math.PI * 88) * (1 - timerSeconds / timerTotal)
 }
 function startTimer() {
   if (timerRunning) return
@@ -1339,7 +1499,7 @@ function addTest() {
   const subject = document.getElementById('testSubject').value.trim()
   const name = document.getElementById('testName').value.trim()
   const date = document.getElementById('testDate').value
-  if (!subject || !name || !date) return
+  if (!subject || !name || !date) { showError('Please fill in subject, name and date.'); return }
   data.schedule.push({ subject, name, date })
   document.getElementById('testSubject').value = ''
   document.getElementById('testName').value = ''
@@ -1350,9 +1510,17 @@ function addTest() {
 }
 
 function deleteTest(i) {
+  const removed = data.schedule[i]
   data.schedule.splice(i, 1)
   renderSchedule(); scheduleSave()
   updateScheduleBadge()
+  if (removed) {
+    showUndoToast('Test deleted', () => {
+      data.schedule.splice(Math.min(i, data.schedule.length), 0, removed)
+      renderSchedule(); scheduleSave()
+      updateScheduleBadge()
+    })
+  }
 }
 
 // ── DASHBOARD ──
@@ -1365,13 +1533,13 @@ function updateDashboard() {
 
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const upcoming = data.schedule
-    .filter(t => new Date(t.date + 'T00:00:00') >= today)
-    .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .filter(t => new Date(t.date + 'T00:00:00') >= today)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
   if (upcoming.length > 0) {
     document.getElementById('dashNextTest').textContent = upcoming[0].name
     const diff = Math.round((new Date(upcoming[0].date + 'T00:00:00') - today) / 86400000)
     document.getElementById('dashNextTestDate').textContent =
-      (diff === 0 ? 'Today!' : `In ${diff} day${diff !== 1 ? 's' : ''}`) + ' — ' + upcoming[0].subject
+        (diff === 0 ? 'Today!' : `In ${diff} day${diff !== 1 ? 's' : ''}`) + ' — ' + upcoming[0].subject
   } else {
     document.getElementById('dashNextTest').textContent = '—'
     document.getElementById('dashNextTestDate').textContent = 'No upcoming tests'
@@ -1380,10 +1548,38 @@ function updateDashboard() {
 
 function updateDate() {
   document.getElementById('dateDisplay').textContent =
-    new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 // ── FLASHCARDS ──
+function getFcGroups(subject) {
+  const groups = new Set()
+  getCards(subject).forEach(c => groups.add(c.group || 'General'))
+  return [...groups].sort()
+}
+
+function renderFcGroupChips() {
+  const row = document.getElementById('fcGroupChips')
+  const groups = getFcGroups(currentSubject)
+  const chips = ['All', ...groups]
+  row.innerHTML = chips.map(g =>
+      `<button class="group-chip ${activeFcGroup === g ? 'active' : ''}" data-group="${g}">${g}</button>`
+  ).join('') + `<button class="group-chip group-chip-add" id="fcGroupAddBtn">+ New Group</button>`
+
+  row.querySelectorAll('.group-chip[data-group]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeFcGroup = btn.dataset.group
+      renderFlashcardList()
+    })
+  })
+  document.getElementById('fcGroupAddBtn').addEventListener('click', () => {
+    openModal('New Group Name', '', name => {
+      activeFcGroup = name
+      renderFlashcardList()
+    })
+  })
+}
+
 function renderFlashcardList() {
   fcMode = 'list'
   const reviewView = document.getElementById('fcReviewView')
@@ -1403,28 +1599,27 @@ function renderFlashcardList() {
       <div class="fc-review-actions">
         <button class="fc-flip-btn" id="fcFlipBtn">Flip card <span class="kbd-sub">Space</span></button>
         <div class="fc-answer-btns hidden" id="fcReviewAnswer">
-          <button class="fc-again-btn" id="fcAgainBtn">✕ Again <span class="kbd-sub">1</span></button>
-          <button class="fc-hard-btn" id="fcHardBtn" style="border: 1px solid rgba(251, 146, 60, 0.3); background: rgba(251, 146, 60, 0.15); color: #fb923c; margin-right: 0px;">⚠ Hard <span class="kbd-sub">2</span></button>
-          <button class="fc-gotit-btn" id="fcGotItBtn">✓ Good <span class="kbd-sub">3</span></button>
-          <button class="fc-easy-btn" id="fcEasyBtn" style="border: 1px solid rgba(103, 232, 249, 0.3); background: rgba(103, 232, 249, 0.15); color: #67e8f9; margin-left: 0px;">★ Easy <span class="kbd-sub">4</span></button>
+          <button class="fc-again-btn" id="fcAgainBtn">Again <span class="kbd-sub">1</span></button>
+          <button class="fc-gotit-btn" id="fcGotItBtn">Good <span class="kbd-sub">2</span></button>
         </div>
       </div>
     `
     document.getElementById('fcBackBtn').addEventListener('click', endReview)
     document.getElementById('fcFlipBtn').addEventListener('click', flipCard)
     document.getElementById('fcAgainBtn').addEventListener('click', () => rateCard(0))
-    document.getElementById('fcHardBtn').addEventListener('click', () => rateCard(1))
-    document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(2))
-    document.getElementById('fcEasyBtn').addEventListener('click', () => rateCard(3))
+    document.getElementById('fcGotItBtn').addEventListener('click', () => rateCard(1))
   }
 
   document.getElementById('fcListView').classList.remove('hidden')
   reviewView.classList.add('hidden')
   updateSubjectLabels()
 
-  const cards = getCards(currentSubject)
-  
-  // Render stats row
+  renderFcGroupChips()
+
+  const allCards = getCards(currentSubject)
+  const cards = activeFcGroup === 'All' ? allCards : allCards.filter(c => (c.group || 'General') === activeFcGroup)
+
+  // Render stats row (reflects the active group filter)
   const statsRow = document.getElementById('fcStatsRow')
   const dueCount = cards.filter(c => !c.due || c.due <= Date.now()).length
   const newCount = cards.filter(c => c.interval === 1 && c.ease === 2.5).length
@@ -1440,23 +1635,26 @@ function renderFlashcardList() {
   const list = document.getElementById('fcCardList')
   const empty = document.getElementById('fcEmpty')
   const reviewBtn = document.getElementById('fcStartReviewBtn')
+  const reviewAllBtn = document.getElementById('fcReviewAllBtn')
 
   empty.style.display = cards.length === 0 ? 'block' : 'none'
   reviewBtn.style.display = cards.length === 0 ? 'none' : 'inline-block'
+  reviewAllBtn.style.display = cards.length === 0 ? 'none' : 'inline-block'
 
   if (cards.length > 0) {
     reviewBtn.textContent = dueCount > 0 ? `Review (${dueCount} due)` : 'Review (none due)'
     reviewBtn.disabled = dueCount === 0
     reviewBtn.style.opacity = dueCount === 0 ? '0.4' : '1'
+    reviewAllBtn.textContent = `Review All (${cards.length})`
   }
 
-  list.innerHTML = cards.map((c, i) => `
+  list.innerHTML = cards.map(c => `
     <div class="fc-card-row">
       <div class="fc-card-content">
-        <div class="fc-front">${c.front}</div>
+        <div class="fc-front">${c.front} <span class="fc-group-tag">${c.group || 'General'}</span></div>
         <div class="fc-back">${c.back}</div>
       </div>
-      <button class="fc-delete-btn" onclick="deleteCard(${i})">×</button>
+      <button class="fc-delete-btn" onclick="deleteCard('${c.id}')">×</button>
     </div>
   `).join('')
 }
@@ -1470,29 +1668,63 @@ function hideCardForm() {
   document.getElementById('fcAddForm').classList.add('hidden')
   document.getElementById('fcFrontInput').value = ''
   document.getElementById('fcBackInput').value = ''
+  const groupInput = document.getElementById('fcGroupInput')
+  if (groupInput) groupInput.value = ''
 }
 
 function saveNewCard() {
   const front = document.getElementById('fcFrontInput').value.trim()
   const back = document.getElementById('fcBackInput').value.trim()
   if (!front || !back) return
-  const card = { id: uid(), front, back, due: Date.now(), interval: 1, ease: 2.5 }
+  const groupInput = document.getElementById('fcGroupInput')
+  const typedGroup = groupInput ? groupInput.value.trim() : ''
+  const group = typedGroup || (activeFcGroup !== 'All' ? activeFcGroup : 'General')
+  const card = { id: uid(), front, back, due: Date.now(), interval: 1, ease: 2.5, group }
   getCards(currentSubject).unshift(card)
   hideCardForm()
   renderFlashcardList()
   scheduleSave()
 }
 
-function deleteCard(i) {
-  getCards(currentSubject).splice(i, 1)
+function deleteCard(id) {
+  const subject = currentSubject
+  const cards = getCards(subject)
+  const idx = cards.findIndex(c => c.id === id)
+  if (idx === -1) return
+  const removed = cards[idx]
+  cards.splice(idx, 1)
   renderFlashcardList()
   scheduleSave()
+  showUndoToast('Flashcard deleted', () => {
+    getCards(subject).splice(Math.min(idx, getCards(subject).length), 0, removed)
+    if (currentSubject === subject) renderFlashcardList()
+    scheduleSave()
+  })
 }
 
 // ── FLASHCARD REVIEW (SM-2 spaced repetition) ──
+function getGroupFilteredCards() {
+  const allCards = getCards(currentSubject)
+  return activeFcGroup === 'All' ? allCards : allCards.filter(c => (c.group || 'General') === activeFcGroup)
+}
+
 function startReview() {
-  const cards = getCards(currentSubject)
+  const cards = getGroupFilteredCards()
   fcQueue = cards.filter(c => !c.due || c.due <= Date.now())
+  if (fcQueue.length === 0) return
+  fcIdx = 0
+  fcFlipped = false
+  document.getElementById('fcListView').classList.add('hidden')
+  document.getElementById('fcReviewView').classList.remove('hidden')
+  showReviewCard()
+}
+
+// Review every card in the current group regardless of due date — lets the
+// user go back over material they've already studied instead of waiting
+// for the spaced-repetition schedule to make it available again.
+function startReviewAll() {
+  const cards = getGroupFilteredCards()
+  fcQueue = [...cards]
   if (fcQueue.length === 0) return
   fcIdx = 0
   fcFlipped = false
@@ -1526,6 +1758,13 @@ function flipCard() {
   }, 300)
 }
 
+function logReview(correct) {
+  const day = todayStr()
+  if (!data.reviewLog[day]) data.reviewLog[day] = { total: 0, correct: 0 }
+  data.reviewLog[day].total++
+  if (correct) data.reviewLog[day].correct++
+}
+
 function rateCard(gotIt) {
   const card = fcQueue[fcIdx]
   const original = getCards(currentSubject).find(c => c.id === card.id)
@@ -1540,6 +1779,7 @@ function rateCard(gotIt) {
       original.due = Date.now() + 60 * 1000
     }
   }
+  logReview(!!gotIt)
   fcIdx++
   scheduleSave()
   showReviewCard()
@@ -1564,6 +1804,8 @@ function endReview() {
 }
 
 // ── PROGRESS PAGE ──
+const MASTERED_INTERVAL_DAYS = 21
+
 function renderProgress() {
   const streak = data.streak
   document.getElementById('progStreakCount').textContent = streak.count
@@ -1571,7 +1813,10 @@ function renderProgress() {
   document.getElementById('progTotalDays').textContent = totalDays
   const totalCards = subjects.reduce((sum, s) => sum + getCards(s).length, 0)
   document.getElementById('progTotalCards').textContent = totalCards
+  const masteredCards = subjects.reduce((sum, s) => sum + getCards(s).filter(c => c.interval >= MASTERED_INTERVAL_DAYS).length, 0)
+  document.getElementById('progMasteredCards').textContent = masteredCards
   renderHeatmap()
+  renderRetentionChart()
 }
 
 function renderHeatmap() {
@@ -1591,6 +1836,35 @@ function renderHeatmap() {
   }).join('')
 }
 
+function renderRetentionChart() {
+  const chart = document.getElementById('retentionChart')
+  const emptyMsg = document.getElementById('retentionEmpty')
+  const days = []
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    days.push(d.toISOString().slice(0, 10))
+  }
+  const hasAnyData = days.some(d => data.reviewLog[d] && data.reviewLog[d].total > 0)
+  emptyMsg.style.display = hasAnyData ? 'none' : 'block'
+  chart.style.display = hasAnyData ? 'flex' : 'none'
+  if (!hasAnyData) return
+
+  chart.innerHTML = days.map(dateStr => {
+    const log = data.reviewLog[dateStr]
+    const pct = log && log.total > 0 ? Math.round((log.correct / log.total) * 100) : 0
+    const d = new Date(dateStr + 'T00:00:00')
+    const label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    const title = log && log.total > 0 ? `${label}: ${pct}% (${log.correct}/${log.total})` : `${label}: no reviews`
+    return `
+      <div class="retention-bar-col" title="${title}">
+        <div class="retention-bar ${log && log.total > 0 ? '' : 'empty'}" style="height:${log && log.total > 0 ? Math.max(pct, 3) : 2}%"></div>
+        <div class="retention-bar-label">${d.getDate()}</div>
+      </div>
+    `
+  }).join('')
+}
+
 // ── GRADES ──
 function renderGrades() {
   updateSubjectLabels()
@@ -1602,8 +1876,8 @@ function renderGrades() {
   // stats
   const gradedEntries = entries.filter(e => e.value !== null)
   const avg = gradedEntries.length
-    ? Math.round(gradedEntries.reduce((s, e) => s + e.value, 0) / gradedEntries.length * 10) / 10
-    : null
+      ? Math.round(gradedEntries.reduce((s, e) => s + e.value, 0) / gradedEntries.length * 10) / 10
+      : null
   const highest = gradedEntries.length ? Math.max(...gradedEntries.map(e => e.value)) : null
   const lowest  = gradedEntries.length ? Math.min(...gradedEntries.map(e => e.value)) : null
 
@@ -1649,8 +1923,8 @@ function renderGrades() {
   list.innerHTML = entries.map((e, i) => {
     const isUngraded = e.value === null
     const scoreText = isUngraded
-      ? '—'
-      : (e.achieved != null ? `${e.achieved}/${e.max}` : `${e.value}%`)
+        ? '—'
+        : (e.achieved != null ? `${e.achieved}/${e.max}` : `${e.value}%`)
     const pctText = isUngraded ? 'Not graded' : `${e.value}%`
     const valClass = isUngraded ? 'ungraded' : e.value >= (target || 50) ? 'pass' : 'fail'
     return `
@@ -1691,9 +1965,19 @@ function addGrade() {
 }
 
 function deleteGrade(i) {
-  getGrades(currentSubject).entries.splice(i, 1)
+  const subject = currentSubject
+  const removed = getGrades(subject).entries[i]
+  getGrades(subject).entries.splice(i, 1)
   renderGrades()
   scheduleSave()
+  if (removed) {
+    showUndoToast('Grade entry deleted', () => {
+      const entries = getGrades(subject).entries
+      entries.splice(Math.min(i, entries.length), 0, removed)
+      if (currentSubject === subject) renderGrades()
+      scheduleSave()
+    })
+  }
 }
 
 function setGradeTarget() {
@@ -1746,6 +2030,28 @@ function showError(msg) {
   toast.classList.add('show')
   clearTimeout(errorTimer)
   errorTimer = setTimeout(() => toast.classList.remove('show'), 3000)
+}
+
+// ── UNDO TOAST ──
+// Call with a short message and a restore() function that puts the deleted
+// data back and re-renders. Only the most recent deletion can be undone —
+// starting a new one discards the previous restore callback.
+function showUndoToast(message, restoreFn) {
+  lastDeletedAction = { restore: restoreFn }
+  const toast = document.getElementById('undoToast')
+  document.getElementById('undoToastMsg').textContent = message
+  toast.classList.add('show')
+  clearTimeout(undoToastTimer)
+  undoToastTimer = setTimeout(() => {
+    toast.classList.remove('show')
+    lastDeletedAction = null
+  }, 6000)
+}
+
+function hideUndoToast() {
+  document.getElementById('undoToast').classList.remove('show')
+  clearTimeout(undoToastTimer)
+  lastDeletedAction = null
 }
 
 // ── SYMBOL PICKER ──
@@ -1831,7 +2137,13 @@ function openImagePicker() {
 function onImagePicked(e) {
   const file = e.target.files && e.target.files[0]
   if (!file) return
+  const MAX_SIZE = 8 * 1024 * 1024 // 8MB
+  if (file.size > MAX_SIZE) {
+    showError('Image is too large (max 8MB). Please choose a smaller file.')
+    return
+  }
   const reader = new FileReader()
+  reader.onerror = () => showError('Failed to read image file.')
   reader.onload = ev => insertImageAtCursor(ev.target.result)
   reader.readAsDataURL(file)
 }

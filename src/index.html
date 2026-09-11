@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Krypt [BETA]</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <title>Krypt [BETA]</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
@@ -45,6 +45,7 @@
       <button class="nav-btn" data-page="progress"><span class="nav-icon">◈</span> Progress</button>
     </nav>
 
+    <button class="nav-btn" id="shortcutsBtn"><span class="nav-icon">?</span> Shortcuts</button>
     <button class="nav-btn" id="settingsGearBtn"><span class="nav-icon">⚙</span> Settings</button>
   </aside>
   <div class="sidebar-resizer" id="sidebarResizer" title="Resize sidebar"></div>
@@ -70,6 +71,12 @@
   <!-- ERROR TOAST -->
   <div class="error-toast" id="errorToast"></div>
 
+  <!-- UNDO TOAST -->
+  <div class="undo-toast" id="undoToast">
+    <span id="undoToastMsg"></span>
+    <button id="undoToastBtn">Undo</button>
+  </div>
+
   <!-- CONTEXT MENU -->
   <div class="ctx-menu hidden" id="ctxMenu">
     <button id="ctxRename">✎  Rename</button>
@@ -79,39 +86,13 @@
   <!-- FILE CONTEXT MENU -->
   <div class="ctx-menu hidden" id="fileCtxMenu">
     <button id="fileCtxRename">✎  Rename</button>
+    <button id="fileCtxMoveGroup">▤  Move to Group</button>
     <button id="fileCtxDelete" class="ctx-danger">✕  Delete</button>
   </div>
 
   <!-- IMAGE CONTEXT MENU -->
   <div class="ctx-menu hidden" id="imageCtxMenu">
     <button type="button" data-action="delete-image" class="ctx-danger">Delete image</button>
-  </div>
-
-  <!-- FORMAT PICKER MODAL -->
-  <div class="modal-overlay hidden" id="formatModal">
-    <div class="modal format-modal">
-      <div class="modal-title">Choose export format</div>
-      <div class="fmt-btn-row">
-        <button class="fmt-btn" data-fmt="txt">
-          <span class="fmt-icon">📄</span>
-          <span class="fmt-label">Plain Text</span>
-          <span class="fmt-ext">.txt</span>
-        </button>
-        <button class="fmt-btn" data-fmt="html">
-          <span class="fmt-icon">🌐</span>
-          <span class="fmt-label">HTML</span>
-          <span class="fmt-ext">.html</span>
-        </button>
-        <button class="fmt-btn" data-fmt="docx">
-          <span class="fmt-icon">📝</span>
-          <span class="fmt-label">Word</span>
-          <span class="fmt-ext">.docx</span>
-        </button>
-      </div>
-      <div class="modal-btns">
-        <button id="fmtCancelBtn">Cancel</button>
-      </div>
-    </div>
   </div>
 
   <!-- CONFIRM DELETE MODAL -->
@@ -122,6 +103,25 @@
       <div class="modal-btns">
         <button id="confirmCancelBtn">Cancel</button>
         <button id="confirmOkBtn" class="btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KEYBOARD SHORTCUTS MODAL -->
+  <div class="modal-overlay hidden" id="shortcutsModal">
+    <div class="modal shortcuts-modal">
+      <div class="modal-title">Keyboard Shortcuts</div>
+      <div class="shortcuts-list">
+        <div class="shortcut-row"><span>Save current note</span><span class="kbd-sub">Ctrl+S</span></div>
+        <div class="shortcut-row"><span>New note / new flashcard</span><span class="kbd-sub">Ctrl+N</span></div>
+        <div class="shortcut-row"><span>Bold / Italic / Underline</span><span class="kbd-sub">Ctrl+B / I / U</span></div>
+        <div class="shortcut-row"><span>Undo / Redo (in editor)</span><span class="kbd-sub">Ctrl+Z / Y</span></div>
+        <div class="shortcut-row"><span>Flip flashcard</span><span class="kbd-sub">Space</span></div>
+        <div class="shortcut-row"><span>Rate flashcard — Again / Good</span><span class="kbd-sub">1 / 2</span></div>
+        <div class="shortcut-row"><span>Toggle DevTools</span><span class="kbd-sub">Ctrl+Shift+I</span></div>
+      </div>
+      <div class="modal-btns">
+        <button id="shortcutsCloseBtn" class="btn-accent">Close</button>
       </div>
     </div>
   </div>
@@ -206,17 +206,18 @@
             <div class="page-eyebrow" id="notesSubjectLabel">—</div>
             <h1>Notes</h1>
           </div>
-          <div style="display:flex;gap:10px;align-items:center">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <input type="text" id="notesSearch" class="notes-search-input" placeholder="Search notes..." spellcheck="false" autocomplete="off" />
+            <label class="global-search-label"><input type="checkbox" id="notesSearchAll" /> All subjects</label>
             <button class="btn-accent-outline" id="newFileBtn">+ New File</button>
           </div>
         </header>
+        <div class="group-chip-row" id="noteGroupChips"></div>
         <div class="file-list" id="fileList"></div>
         <div class="task-empty" id="fileListEmpty">No files yet. Create one above.</div>
         <div class="file-selection-bar hidden" id="fileSelectionBar">
           <span class="sel-count" id="selectionCount"></span>
           <button class="sel-btn" id="selectAllBtn">Select all</button>
-          <button class="sel-btn sel-btn-accent" id="exportSelectedBtn">↑ Export</button>
           <button class="sel-btn sel-btn-danger" id="deleteSelectedBtn">✕ Delete</button>
         </div>
       </div>
@@ -230,7 +231,7 @@
               <div class="editor-filename" id="editorFilename">Untitled</div>
             </div>
           </div>
-          <button class="export-btn" id="exportBtn">↑ Export</button>
+
         </header>
         <div class="notes-container">
           <div class="editor-toolbar">
@@ -305,6 +306,11 @@
         <div class="task-input-row">
           <input type="text" id="taskInput" placeholder="Add a new task..."
                  spellcheck="false" autocomplete="off" />
+          <select id="taskRecurring" class="task-recurring-select" title="Repeat">
+            <option value="">No repeat</option>
+            <option value="daily">Repeat daily</option>
+            <option value="weekly">Repeat weekly</option>
+          </select>
           <button id="addTaskBtn">Add</button>
         </div>
         <div id="taskListView">
@@ -380,9 +386,12 @@
           </div>
           <div style="display:flex;gap:10px;align-items:center">
             <button class="btn-accent-outline" id="fcStartReviewBtn" style="display:none">Review</button>
+            <button class="btn-accent-outline" id="fcReviewAllBtn" style="display:none">Review All</button>
             <button class="btn-accent-outline" id="fcNewCardBtn">+ New Card</button>
           </div>
         </header>
+
+        <div class="group-chip-row" id="fcGroupChips"></div>
 
         <!-- Stats row -->
         <div class="fc-stats-row" id="fcStatsRow" style="display:none">
@@ -411,6 +420,10 @@
               <label class="fc-form-label">BACK</label>
               <input type="text" id="fcBackInput" placeholder="Answer or definition..." spellcheck="false" autocomplete="off" />
             </div>
+            <div class="fc-form-field" style="flex:0 0 140px;min-width:120px">
+              <label class="fc-form-label">GROUP (OPTIONAL)</label>
+              <input type="text" id="fcGroupInput" placeholder="e.g. Chapter 3" spellcheck="false" autocomplete="off" />
+            </div>
             <div class="fc-form-actions">
               <button class="fc-cancel-btn" id="fcCancelBtn">Cancel</button>
               <button class="fc-save-btn" id="fcSaveBtn">Save Card</button>
@@ -437,10 +450,8 @@
         <div class="fc-review-actions">
           <button class="fc-flip-btn" id="fcFlipBtn">Flip card <span class="kbd-sub">Space</span></button>
           <div class="fc-answer-btns hidden" id="fcReviewAnswer">
-            <button class="fc-again-btn" id="fcAgainBtn">✕ Again <span class="kbd-sub">1</span></button>
-            <button class="fc-hard-btn" id="fcHardBtn" style="border: 1px solid rgba(251, 146, 60, 0.3); background: rgba(251, 146, 60, 0.15); color: #fb923c; margin-right: 0px;">⚠ Hard <span class="kbd-sub">2</span></button>
-            <button class="fc-gotit-btn" id="fcGotItBtn">✓ Good <span class="kbd-sub">3</span></button>
-            <button class="fc-easy-btn" id="fcEasyBtn" style="border: 1px solid rgba(103, 232, 249, 0.3); background: rgba(103, 232, 249, 0.15); color: #67e8f9; margin-left: 0px;">★ Easy <span class="kbd-sub">4</span></button>
+            <button class="fc-again-btn" id="fcAgainBtn">Again <span class="kbd-sub">1</span></button>
+            <button class="fc-gotit-btn" id="fcGotItBtn">Good <span class="kbd-sub">2</span></button>
           </div>
         </div>
       </div>
@@ -540,6 +551,17 @@
           <div class="prog-stat-label">🃏 Total Flashcards</div>
           <div class="prog-stat-sub">across all subjects</div>
         </div>
+        <div class="prog-stat-card">
+          <div class="prog-stat-num" id="progMasteredCards">0</div>
+          <div class="prog-stat-label">🎯 Cards Mastered</div>
+          <div class="prog-stat-sub">interval 21+ days</div>
+        </div>
+      </div>
+
+      <div class="heatmap-section" style="margin-bottom:20px">
+        <div class="heatmap-title">Retention — Last 14 Days</div>
+        <div class="retention-chart" id="retentionChart"></div>
+        <div class="task-empty" id="retentionEmpty" style="display:none">No flashcard reviews yet.</div>
       </div>
 
       <div class="heatmap-section">

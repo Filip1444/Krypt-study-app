@@ -1,21 +1,45 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
+
+let mainWindow = null
 
 // ── DATA FILE PATH ──
 // Per-user file on disk (never bundled in the app). Windows example:
 // %APPDATA%\krypt\krypt-data.json  (folder name follows package.json "name")
 const dataPath = path.join(app.getPath('userData'), 'krypt-data.json')
+const backupPath = dataPath + '.backup.json'
 
 function loadData() {
   try {
     if (fs.existsSync(dataPath)) return JSON.parse(fs.readFileSync(dataPath, 'utf8'))
-  } catch(e) {}
+  } catch(e) {
+    console.error('loadData error, attempting backup:', e)
+    try {
+      if (fs.existsSync(backupPath)) return JSON.parse(fs.readFileSync(backupPath, 'utf8'))
+    } catch(e2) {
+      console.error('backup load also failed:', e2)
+    }
+  }
   return null
 }
 
+// Atomic write: write to a temp file, back up the previous good copy, then
+// rename the temp file over the real one. Rename is atomic on virtually all
+// filesystems, so a crash mid-save can't leave krypt-data.json half-written.
 function saveData(data) {
-  try { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2), 'utf8') } catch(e) {}
+  const tmpPath = dataPath + '.tmp'
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8')
+    if (fs.existsSync(dataPath)) {
+      try { fs.copyFileSync(dataPath, backupPath) } catch(e) { console.error('backup copy failed:', e) }
+    }
+    fs.renameSync(tmpPath, dataPath)
+    return true
+  } catch(e) {
+    console.error('saveData error:', e)
+    return false
+  }
 }
 
 function createWindow() {
@@ -29,6 +53,9 @@ function createWindow() {
       contextIsolation: false
     }
   })
+  mainWindow = win
+  win.on('closed', () => { mainWindow = null })
+
   Menu.setApplicationMenu(null)
   win.loadFile('src/index.html')
 
@@ -42,88 +69,7 @@ function createWindow() {
 
 // ── IPC HANDLERS ──
 ipcMain.handle('load-data', () => loadData())
-ipcMain.handle('save-data', (_, data) => { saveData(data); return true })
-
-// Single note export
-ipcMain.on('export-notes', async (event, { format, subject, noteName, subjectName, plainText, htmlContent }) => {
-  const win = BrowserWindow.getFocusedWindow()
-  const ext = format === 'docx' ? 'docx' : format === 'html' ? 'html' : 'txt'
-  const { filePath, canceled } = await dialog.showSaveDialog(win, {
-    title: 'Export Note',
-    defaultPath: subject || 'note',
-    filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
-  })
-  if (canceled || !filePath) return
-  try {
-    if (format === 'docx') {
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel } = require('docx')
-      const doc = new Document({
-        sections: [{
-          children: [
-            new Paragraph({ text: noteName || subject, heading: HeadingLevel.HEADING_1 }),
-            new Paragraph({ children: [new TextRun({ text: `${subjectName || ''} · Exported ${new Date().toLocaleDateString()}`, color: '888888', size: 20 })] }),
-            new Paragraph(''),
-            ...(plainText || '').split('\n').map(line => new Paragraph({ children: [new TextRun(line)] }))
-          ]
-        }]
-      })
-      fs.writeFileSync(filePath, await Packer.toBuffer(doc))
-    } else if (format === 'html') {
-      const full = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${noteName || subject}</title>
-<style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;color:#111;line-height:1.8;padding:0 20px}h1{font-size:28px}.meta{color:#888;font-size:13px;margin-bottom:32px}</style>
-</head><body><h1>${noteName || subject}</h1><div class="meta">${subjectName || ''} · Exported ${new Date().toLocaleDateString()}</div>${htmlContent || ''}</body></html>`
-      fs.writeFileSync(filePath, full, 'utf8')
-    } else {
-      fs.writeFileSync(filePath, plainText || '', 'utf8')
-    }
-    event.reply('export-done', { success: true })
-  } catch(err) {
-    console.error('export-notes error:', err)
-    event.reply('export-done', { success: false })
-  }
-})
-
-// Multi-note export — one save dialog per file
-ipcMain.on('export-folder', async (event, { format, subject, files }) => {
-  const win = BrowserWindow.getFocusedWindow()
-  const ext = format === 'docx' ? 'docx' : format === 'html' ? 'html' : 'txt'
-  try {
-    for (const file of files) {
-      const safeName = file.name.replace(/[^a-z0-9 _\-]/gi, '_')
-      const { filePath, canceled } = await dialog.showSaveDialog(win, {
-        title: `Save — ${file.name}`,
-        defaultPath: safeName,
-        filters: [{ name: ext.toUpperCase(), extensions: [ext] }]
-      })
-      if (canceled || !filePath) continue
-      if (format === 'docx') {
-        const { Document, Packer, Paragraph, TextRun, HeadingLevel } = require('docx')
-        const doc = new Document({
-          sections: [{
-            children: [
-              new Paragraph({ text: file.name, heading: HeadingLevel.HEADING_1 }),
-              new Paragraph({ children: [new TextRun({ text: subject, color: '888888', size: 20 })] }),
-              new Paragraph(''),
-              ...(file.plainText || '').split('\n').map(line => new Paragraph({ children: [new TextRun(line)] }))
-            ]
-          }]
-        })
-        fs.writeFileSync(filePath, await Packer.toBuffer(doc))
-      } else if (format === 'html') {
-        const content = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${file.name}</title>
-<style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;color:#111;line-height:1.8;padding:0 20px}h1{font-size:28px}.meta{color:#888;font-size:13px;margin-bottom:32px}</style>
-</head><body><h1>${file.name}</h1><div class="meta">${subject}</div>${file.htmlContent}</body></html>`
-        fs.writeFileSync(filePath, content, 'utf8')
-      } else {
-        fs.writeFileSync(filePath, file.plainText || '', 'utf8')
-      }
-    }
-    event.reply('export-done', { success: true })
-  } catch(err) {
-    console.error('export-folder error:', err)
-    event.reply('export-done', { success: false })
-  }
-})
+ipcMain.handle('save-data', (_, data) => saveData(data))
 
 app.whenReady().then(() => {
   createWindow()
