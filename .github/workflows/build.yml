@@ -34,37 +34,9 @@ jobs:
           path: release/*.exe
           if-no-files-found: error
 
-  build-linux:
-    name: Build (Linux)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Linux release
-        run: npm run dist:linux
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-release
-          path: |
-            release_linux/*.AppImage
-            release_linux/*.deb
-          if-no-files-found: error
-
   release:
     name: Create GitHub Release
-    needs: [build-windows, build-linux]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -76,12 +48,6 @@ jobs:
           name: windows-release
           path: dist/windows
 
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-release
-          path: dist/linux
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -90,8 +56,6 @@ jobs:
           prerelease: false
           files: |
             dist/windows/*.exe
-            dist/linux/*.AppImage
-            dist/linux/*.deb
           body: |
             ## KRYPT ${{ github.ref_name }}
 
@@ -103,4 +67,3 @@ jobs:
 
             ### Downloads
             - Windows: installer and portable executable (`.exe`)
-            - Linux: portable AppImage (`.AppImage`) and Debian package (`.deb`)

@@ -1,6 +1,6 @@
 {
   "name": "krypt",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "KRYPT desktop app",
   "author": "KRYPT",
   "main": "main.js",

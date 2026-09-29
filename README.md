@@ -17,7 +17,7 @@ KRYPT is an offline-first desktop study app for organizing notes and study work.
 ## Requirements
 
 - Node.js and npm
-- Windows or Linux for the corresponding desktop build
+- Windows for the packaged release
 
 ## Run from source
 
@@ -30,10 +30,9 @@ npm start
 
 ```bash
 npm run dist:win
-npm run dist:linux
 ```
 
-Windows build artifacts are written to `release/`. Linux AppImage and Debian packages are written to `release_linux/`.
+Windows installer and portable build artifacts are written to `release/`.
 
 ## Data and privacy
 

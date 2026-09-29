@@ -4,11 +4,11 @@ Use this file as a quick handoff for future work sessions. Update it when featur
 
 ## Current project state
 
-- Desktop app built with Electron; package version is 1.6.0.
+- Desktop app built with Electron; package version is 1.6.1.
 - Main interface and feature logic live in `src/index.html`, `src/style.css`, and `src/app.js`; Electron setup and the renderer bridge live in `main.js` and `preload.js`.
 - The renderer runs sandboxed with context isolation, Node integration disabled, and a restrictive content security policy.
 - App data is stored locally as JSON through the main process, with atomic saves, a recovery copy, and up to 10 dated snapshots.
-- Release automation builds Windows and Linux packages; local build scripts are defined in `package.json`.
+- Release automation builds Windows packages; local build scripts are defined in `package.json`.
 
 ## Features present
 
@@ -32,7 +32,6 @@ Use this file as a quick handoff for future work sessions. Update it when featur
 ```bash
 npm start
 npm run dist:win
-npm run dist:linux
 ```
 
 ## Notes for the next session
