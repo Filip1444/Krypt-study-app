@@ -8,7 +8,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ── Windows build ──────────────────────────────────────────────
   build-windows:
     name: Build (Windows)
     runs-on: windows-latest
@@ -27,22 +26,17 @@ jobs:
 
       - name: Build Windows release
         run: npm run dist:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: |
-            release/*.exe
-            release/latest.yml
+          path: release/*.exe
           if-no-files-found: error
 
-  # ── macOS build ────────────────────────────────────────────────
-  build-macos:
-    name: Build (macOS)
-    runs-on: macos-latest
+  build-linux:
+    name: Build (Linux)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,22 +50,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build macOS release
-        run: npm run dist:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Linux release
+        run: npm run dist:linux
 
-      - name: Upload macOS artifacts
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-release
-          path: release_macOS/*.dmg
+          name: linux-release
+          path: |
+            release_linux/*.AppImage
+            release_linux/*.deb
           if-no-files-found: error
 
-  # ── GitHub Release (only on version tags like v1.0.0) ──────────
   release:
     name: Create GitHub Release
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -83,11 +76,11 @@ jobs:
           name: windows-release
           path: dist/windows
 
-      - name: Download macOS artifacts
+      - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
-          name: macos-release
-          path: dist/macos
+          name: linux-release
+          path: dist/linux
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -97,19 +90,17 @@ jobs:
           prerelease: false
           files: |
             dist/windows/*.exe
-            dist/macos/*.dmg
+            dist/linux/*.AppImage
+            dist/linux/*.deb
           body: |
             ## KRYPT ${{ github.ref_name }}
 
-            ### Downloads
-            | Platform | File |
-            |----------|------|
-            | 🪟 Windows Installer | `KRYPT Setup *.exe` |
-            | 🪟 Windows Portable  | `KRYPT *.exe` (no install needed) |
-            | 🍎 macOS             | `KRYPT *.dmg` |
+            ### What's new
+            - Reorder subjects by dragging or with the keyboard; the order is saved.
+            - Color-coded grades and consistent rounded-grade target checks.
+            - English and Croatian interface options, plus data backup and recovery improvements.
+            - Polished dialogs and subject movement, with reduced-motion support.
 
-            > **⚠️ macOS Users — "App is damaged" error fix:** 
-            > 1. Open the `.dmg` and drag the app into your **Applications** folder
-            > 2. Open the **Terminal** app on your Mac
-            > 3. Paste this exact command and press Enter: `xattr -cr "/Applications/KRYPT.app"`
-            > 4. You can now launch the app normally! (This bypasses Apple's strict Gatekeeper requirement for paid developer certificates).
+            ### Downloads
+            - Windows: installer and portable executable (`.exe`)
+            - Linux: portable AppImage (`.AppImage`) and Debian package (`.deb`)

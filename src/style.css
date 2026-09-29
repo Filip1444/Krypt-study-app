@@ -78,6 +78,7 @@ body {
 .subject-row {
   display: flex;
   align-items: stretch;
+  position: relative;
   border-radius: 6px;
   transition: background 0.12s;
   /* prevent overflow clipping descenders */
@@ -87,6 +88,37 @@ body {
 .subject-row.active { background: var(--accent); }
 .subject-row.active .subject-btn { color: #000; }
 .subject-row.active .subject-ctx-btn { color: #000; opacity: 0.5; }
+.subject-row.dragging { opacity: 0.45; }
+.subject-row.drop-before::before, .subject-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 1;
+}
+.subject-row.drop-before::before { top: -2px; }
+.subject-row.drop-after::after { bottom: -2px; }
+
+.subject-drag-handle {
+  flex: 0 0 24px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.55;
+  cursor: grab;
+  font-size: 17px;
+  line-height: 1;
+  touch-action: none;
+  transition: opacity 0.15s, color 0.15s;
+}
+.subject-drag-handle:active { cursor: grabbing; }
+.subject-row:hover .subject-drag-handle, .subject-drag-handle:focus-visible { opacity: 1; color: var(--text); }
+.subject-row.active .subject-drag-handle { color: #000; }
+.subject-drag-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
 
 .subject-btn {
   flex: 1;
@@ -179,6 +211,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.modal-overlay:not(.hidden) .modal, .settings-panel:not(.hidden) .settings-card {
+  animation: dialogEnter 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes dialogEnter {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .modal-title { font-size: 16px; font-weight: 700; line-height: 1.4; }
 .modal input {
@@ -1025,7 +1064,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
 /* ── PROGRESS PAGE ── */
 .prog-stats-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 36px;
 }
@@ -1134,23 +1173,70 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
 /* ── SETTINGS PANEL ── */
 .settings-panel {
   position: fixed;
-  bottom: 56px;
-  left: 14px;
-  width: 220px;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,0.7);
+}
+.settings-card {
+  width: min(840px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
   background: var(--surface2);
   border: 1px solid var(--border2);
   border-radius: 12px;
-  padding: 16px;
-  z-index: 900;
+  padding: 24px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.settings-close-btn {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: 24px/1 var(--font-display);
+  cursor: pointer;
+}
+.settings-close-btn:hover { color: var(--text); }
+.settings-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 28px;
+}
+.settings-preferences, .settings-shortcuts {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.settings-shortcuts {
+  border-left: 1px solid var(--border2);
+  padding-left: 28px;
+}
+@media (max-width: 680px) {
+  .settings-content { grid-template-columns: 1fr; }
+  .settings-shortcuts { border-left: 0; border-top: 1px solid var(--border2); padding: 20px 0 0; }
 }
 .settings-title {
   font-size: 14px;
   font-weight: 700;
   line-height: 1.4;
+}
+.settings-language-select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: 12px var(--font-display);
+  cursor: pointer;
 }
 .settings-section-label {
   font-family: var(--font-mono);
@@ -1210,6 +1296,27 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   cursor: pointer;
   padding: 2px;
 }
+.settings-data-actions { display: flex; flex-direction: column; gap: 6px; }
+.settings-data-actions button {
+  border: 1px solid var(--border2); border-radius: 6px; padding: 7px 8px;
+  background: var(--surface); color: var(--text-dim); text-align: left;
+  font: 11px var(--font-display); cursor: pointer;
+}
+.settings-data-actions button:hover { color: var(--text); border-color: var(--accent); }
+.settings-data-path, .settings-data-note { color: var(--text-muted); font: 9px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+.recovery-overlay { z-index: 3000; }
+.recovery-modal { width: min(520px, calc(100vw - 40px)); }
+.recovery-modal p { color: var(--text-dim); font-size: 12px; line-height: 1.6; margin: 0; }
+.recovery-actions { flex-wrap: wrap; }
+.recovery-banner {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1900;
+  display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
+  padding: 9px 12px; border: 1px solid var(--border2); border-radius: 8px;
+  background: var(--surface2); color: var(--text); box-shadow: 0 6px 24px #0008;
+  font: 11px/1.4 var(--font-display);
+}
+.recovery-banner button { background: none; border: 0; color: var(--accent); font: inherit; cursor: pointer; white-space: nowrap; }
+.recovery-banner button:last-child { color: var(--text-muted); font-size: 18px; }
 
 /* ── GRADES PAGE ── */
 .grade-letter {
@@ -1218,11 +1325,12 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   line-height: 1;
   color: var(--text-muted);
 }
-.grade-letter.grade-A { color: var(--accent); }
-.grade-letter.grade-B { color: #67e8f9; }
-.grade-letter.grade-C { color: #fb923c; }
-.grade-letter.grade-D { color: #f472b6; }
-.grade-letter.grade-F { color: var(--danger); }
+.grade-level-0 { --grade-color: #ff5f5f; --grade-bg: rgba(255, 95, 95, 0.12); }
+.grade-level-1 { --grade-color: #fb923c; --grade-bg: rgba(251, 146, 60, 0.12); }
+.grade-level-2 { --grade-color: #facc15; --grade-bg: rgba(250, 204, 21, 0.12); }
+.grade-level-3 { --grade-color: #a3e635; --grade-bg: rgba(163, 230, 53, 0.12); }
+.grade-level-4 { --grade-color: #34d399; --grade-bg: rgba(52, 211, 153, 0.12); }
+.grade-letter[class*="grade-level-"], .grades-stat-num[class*="grade-level-"] { color: var(--grade-color); }
 
 .grades-stats-row {
   display: flex;
@@ -1251,6 +1359,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   font-size: 28px;
   font-weight: 800;
   line-height: 1.1;
+  transition: color 0.18s ease;
 }
 .grades-stat-sub {
   font-family: var(--font-mono);
@@ -1273,7 +1382,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   line-height: 1.5;
   white-space: nowrap;
 }
-.grades-target-input, .grades-value-input {
+.grades-target-input {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1283,16 +1392,10 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   font-size: 13px;
   line-height: 1.4;
   outline: none;
-  width: 72px;
+  width: 110px;
   transition: border-color 0.15s;
 }
-.grades-target-input:focus, .grades-value-input:focus { border-color: var(--accent); }
-.grades-target-pct {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1;
-}
+.grades-target-input:focus { border-color: var(--accent); }
 .grades-target-btn, .grades-add-btn {
   background: var(--accent);
   color: #000;
@@ -1362,9 +1465,9 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   line-height: 1.4;
   padding: 2px 10px;
   border-radius: 5px;
+  transition: color 0.18s ease, background-color 0.18s ease;
 }
-.grade-entry-val.pass { color: var(--accent); background: rgba(212,245,122,0.1); }
-.grade-entry-val.fail { color: var(--danger); background: rgba(255,95,95,0.1); }
+.grade-entry-val[class*="grade-level-"] { color: var(--grade-color); background: var(--grade-bg); }
 .grade-entry-del {
   background: none;
   border: none;
@@ -1533,8 +1636,8 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
 }
 .sym-btn:hover { background: var(--accent); color: #000; border-color: var(--accent); }
 
-/* ── GRADES POINTS INPUTS ── */
-.grades-pts-input {
+/* ── GRADE AND OPTIONAL PERCENT INPUTS ── */
+.grades-grade-input, .grades-percent-input {
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
@@ -1544,15 +1647,13 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   font-size: 13px;
   line-height: 1.4;
   outline: none;
-  width: 68px;
+  width: 190px;
   transition: border-color 0.15s;
-  /* remove number input arrows */
-  appearance: textfield;
-  -moz-appearance: textfield;
 }
-.grades-pts-input::-webkit-outer-spin-button,
-.grades-pts-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.grades-pts-input:focus { border-color: var(--accent); }
+.grades-grade-input { width: 130px; }
+.grades-percent-input::-webkit-outer-spin-button,
+.grades-percent-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.grades-percent-input:focus, .grades-grade-input:focus { border-color: var(--accent); }
 
 .grade-entry-pts {
   font-family: var(--font-mono);
@@ -1566,11 +1667,6 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   color: var(--text-muted);
   background: var(--surface2);
 }
-
-/* remove arrows from target input too */
-.grades-target-input::-webkit-outer-spin-button,
-.grades-target-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.grades-target-input { appearance: textfield; -moz-appearance: textfield; }
 
 /* remove old subject dot styles */
 .subject-dot { display: none; }
@@ -1962,8 +2058,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   white-space: nowrap;
 }
 
-/* ── KEYBOARD SHORTCUTS MODAL ── */
-.shortcuts-modal { width: 420px; }
+/* ── KEYBOARD SHORTCUTS ── */
 .shortcuts-list {
   display: flex;
   flex-direction: column;
@@ -1973,6 +2068,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   font-family: var(--font-display);
   font-size: 13px;
   color: var(--text-dim);
@@ -2009,4 +2105,12 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   font-size: 8px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

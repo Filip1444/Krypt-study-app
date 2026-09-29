@@ -1,6 +1,6 @@
 {
   "name": "krypt",
-  "version": "1.4.0",
+  "version": "1.6.0",
   "description": "KRYPT desktop app",
   "author": "KRYPT",
   "main": "main.js",
@@ -8,6 +8,7 @@
     "start": "electron .",
     "dist": "electron-builder -p never",
     "dist:win": "electron-builder --win -p never",
+    "dist:linux": "electron-builder --linux --config.directories.output=release_linux -p never",
     "dist:mac": "electron-builder --mac --config.directories.output=release_macOS -p never"
   },
   "build": {
@@ -18,6 +19,7 @@
     },
     "files": [
       "main.js",
+      "preload.js",
       "src/**/*",
       "assets/**/*",
       "package.json"
@@ -29,6 +31,11 @@
       ],
       "icon": "assets/icon.ico",
       "sign": null
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Education",
+      "icon": "icon.png"
     },
     "nsis": {
       "oneClick": false,

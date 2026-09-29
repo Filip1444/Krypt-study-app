@@ -2,9 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Krypt [BETA]</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:">
+  <title>KRYPT</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -45,14 +44,34 @@
       <button class="nav-btn" data-page="progress"><span class="nav-icon">◈</span> Progress</button>
     </nav>
 
-    <button class="nav-btn" id="shortcutsBtn"><span class="nav-icon">?</span> Shortcuts</button>
     <button class="nav-btn" id="settingsGearBtn"><span class="nav-icon">⚙</span> Settings</button>
   </aside>
   <div class="sidebar-resizer" id="sidebarResizer" title="Resize sidebar"></div>
 
   <!-- SETTINGS PANEL -->
-  <div class="settings-panel hidden" id="settingsPanel">
-    <div class="settings-title">Settings</div>
+  <div class="settings-panel hidden" id="settingsPanel" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="settings-card">
+    <div class="settings-header">
+      <div class="settings-title">Settings</div>
+      <button type="button" id="settingsCloseBtn" class="settings-close-btn" aria-label="Close settings">×</button>
+    </div>
+    <div class="settings-content">
+    <div class="settings-preferences">
+
+    <label class="settings-section-label" for="languageSelect">LANGUAGE</label>
+    <select id="languageSelect" class="settings-language-select">
+      <option value="en">English</option>
+      <option value="hr">Hrvatski</option>
+    </select>
+
+    <label class="settings-section-label" for="gradingSystemSelect">GRADING SYSTEM</label>
+    <select id="gradingSystemSelect" class="settings-language-select">
+      <option value="F-A">F–A (F worst)</option>
+      <option value="1-5">1–5 (1 worst)</option>
+      <option value="5-1">5–1 (5 worst)</option>
+      <option value="1-10">1–10 (1 worst)</option>
+      <option value="10-1">10–1 (10 worst)</option>
+    </select>
 
     <div class="settings-section-label">THEME</div>
     <div class="theme-btn-row">
@@ -66,10 +85,50 @@
       <label class="settings-picker-label">Custom</label>
       <input type="color" id="accentPicker" class="accent-picker" />
     </div>
+    <div class="settings-section-label">DATA & BACKUPS</div>
+    <div class="settings-data-actions">
+      <button type="button" id="exportDataBtn">Create backup / export data</button>
+      <button type="button" id="importDataBtn">Restore / import data</button>
+      <button type="button" id="showDataFolderBtn">Open data folder</button>
+      <button type="button" id="chooseDataFolderBtn">Choose data folder</button>
+      <div class="settings-data-path" id="dataFolderPath"></div>
+      <div class="settings-data-note">KRYPT keeps up to 10 recent automatic snapshots in this folder.</div>
+    </div>
+    </div>
+    <section class="settings-shortcuts" aria-labelledby="shortcutsTitle">
+      <div class="settings-section-label" id="shortcutsTitle">KEYBOARD SHORTCUTS</div>
+      <div class="shortcuts-list">
+        <div class="shortcut-row"><span>Save current note</span><span class="kbd-sub">Ctrl+S</span></div>
+        <div class="shortcut-row"><span>New note / new flashcard</span><span class="kbd-sub">Ctrl+N</span></div>
+        <div class="shortcut-row"><span>Bold / Italic / Underline</span><span class="kbd-sub">Ctrl+B / I / U</span></div>
+        <div class="shortcut-row"><span>Undo / Redo (in editor)</span><span class="kbd-sub">Ctrl+Z / Y</span></div>
+        <div class="shortcut-row"><span>Flip flashcard</span><span class="kbd-sub">Space</span></div>
+        <div class="shortcut-row"><span>Rate flashcard — Again / Good</span><span class="kbd-sub">1 / 2</span></div>
+      </div>
+    </section>
+    </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden recovery-overlay" id="recoveryOverlay">
+    <div class="modal recovery-modal">
+      <div class="modal-title">Saved data needs recovery</div>
+      <p id="recoveryDetails"></p>
+      <p>Restore a backup file or start a new workspace. KRYPT will not save over the unreadable files until you choose.</p>
+      <div class="modal-btns recovery-actions">
+        <button type="button" id="recoveryImportBtn" class="btn-accent">Restore backup file</button>
+        <button type="button" id="recoveryStartFreshBtn" class="btn-danger">Start empty workspace</button>
+      </div>
+    </div>
   </div>
 
   <!-- ERROR TOAST -->
   <div class="error-toast" id="errorToast"></div>
+  <div class="recovery-banner hidden" id="recoveryBanner">
+    <span id="recoveryBannerText"></span>
+    <button type="button" id="recoveryFolderBtn">Open data folder</button>
+    <button type="button" id="recoveryDismissBtn" aria-label="Dismiss recovery notice">×</button>
+  </div>
 
   <!-- UNDO TOAST -->
   <div class="undo-toast" id="undoToast">
@@ -103,25 +162,6 @@
       <div class="modal-btns">
         <button id="confirmCancelBtn">Cancel</button>
         <button id="confirmOkBtn" class="btn-danger">Delete</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- KEYBOARD SHORTCUTS MODAL -->
-  <div class="modal-overlay hidden" id="shortcutsModal">
-    <div class="modal shortcuts-modal">
-      <div class="modal-title">Keyboard Shortcuts</div>
-      <div class="shortcuts-list">
-        <div class="shortcut-row"><span>Save current note</span><span class="kbd-sub">Ctrl+S</span></div>
-        <div class="shortcut-row"><span>New note / new flashcard</span><span class="kbd-sub">Ctrl+N</span></div>
-        <div class="shortcut-row"><span>Bold / Italic / Underline</span><span class="kbd-sub">Ctrl+B / I / U</span></div>
-        <div class="shortcut-row"><span>Undo / Redo (in editor)</span><span class="kbd-sub">Ctrl+Z / Y</span></div>
-        <div class="shortcut-row"><span>Flip flashcard</span><span class="kbd-sub">Space</span></div>
-        <div class="shortcut-row"><span>Rate flashcard — Again / Good</span><span class="kbd-sub">1 / 2</span></div>
-        <div class="shortcut-row"><span>Toggle DevTools</span><span class="kbd-sub">Ctrl+Shift+I</span></div>
-      </div>
-      <div class="modal-btns">
-        <button id="shortcutsCloseBtn" class="btn-accent">Close</button>
       </div>
     </div>
   </div>
@@ -265,7 +305,7 @@
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group" style="position:relative">
-              <button class="tb-btn sym-picker-btn" id="symbolPickerBtn" title="Insert symbol" onclick="toggleSymbolPicker()">Ω</button>
+              <button class="tb-btn sym-picker-btn" id="symbolPickerBtn" title="Insert symbol">Ω</button>
               <div class="symbol-picker hidden" id="symbolPicker"></div>
             </div>
             <div class="toolbar-divider"></div>
@@ -319,29 +359,29 @@
         </div>
         <div id="taskKanbanView" class="hidden">
           <div class="kanban-board" id="kanbanBoard">
-            <div class="kanban-col" data-status="todo" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'todo')">
+            <div class="kanban-col" data-status="todo">
               <div class="kanban-col-header">
                 <span class="kanban-col-color" style="background:#f472b6"></span>
                 <span class="kanban-col-title">To Do</span>
                 <span class="kanban-col-count" id="kanbanCountTodo">0</span>
               </div>
-              <div class="kanban-cards" id="kanbanCardsTodo" ondragover="allowDrop(event)"></div>
+              <div class="kanban-cards" id="kanbanCardsTodo"></div>
             </div>
-            <div class="kanban-col" data-status="in_progress" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'in_progress')">
+            <div class="kanban-col" data-status="in_progress">
               <div class="kanban-col-header">
                 <span class="kanban-col-color" style="background:#fb923c"></span>
                 <span class="kanban-col-title">In Progress</span>
                 <span class="kanban-col-count" id="kanbanCountInProgress">0</span>
               </div>
-              <div class="kanban-cards" id="kanbanCardsInProgress" ondragover="allowDrop(event)"></div>
+              <div class="kanban-cards" id="kanbanCardsInProgress"></div>
             </div>
-            <div class="kanban-col" data-status="done" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'done')">
+            <div class="kanban-col" data-status="done">
               <div class="kanban-col-header">
                 <span class="kanban-col-color" style="background:#d4f57a"></span>
                 <span class="kanban-col-title">Completed</span>
                 <span class="kanban-col-count" id="kanbanCountDone">0</span>
               </div>
-              <div class="kanban-cards" id="kanbanCardsDone" ondragover="allowDrop(event)"></div>
+              <div class="kanban-cards" id="kanbanCardsDone"></div>
             </div>
           </div>
         </div>
@@ -491,9 +531,7 @@
       <!-- Target setter -->
       <div class="grades-target-row">
         <span class="grades-target-label">Target grade</span>
-        <input type="number" id="gradeTargetInput" class="grades-target-input"
-               placeholder="e.g. 80" min="0" max="100" />
-        <span class="grades-target-pct">%</span>
+        <select id="gradeTargetInput" class="grades-target-input" aria-label="Target grade"></select>
         <button class="grades-target-btn" id="gradeSetTargetBtn">Set</button>
       </div>
 
@@ -501,9 +539,9 @@
       <div class="grades-add-row">
         <input type="text" id="gradeNameInput" placeholder="Assessment name..."
                spellcheck="false" autocomplete="off" class="grades-name-input" />
-        <input type="text" id="gradeAchievedInput" placeholder="Got" class="grades-pts-input" />
-        <span class="grades-target-pct">/</span>
-        <input type="text" id="gradeMaxInput" placeholder="Max" class="grades-pts-input" />
+        <select id="gradeValueInput" class="grades-grade-input" aria-label="Grade"></select>
+        <input type="number" id="gradePercentInput" placeholder="Percent (optional)" aria-label="Percent (optional)"
+               min="0" max="100" step="0.1" class="grades-percent-input" />
         <button class="grades-add-btn" id="gradeAddBtn">Add</button>
       </div>
 
@@ -576,6 +614,7 @@
 
   </main>
 </div>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
-const { ipcRenderer } = require('electron')
+let dataWritable = false
+let recoveryNotice = ''
 
 // ── GLOBAL ERROR SAFETY NET ──
 window.addEventListener('error', e => {
@@ -13,6 +14,7 @@ window.addEventListener('unhandledrejection', e => {
 // ── STATE ──
 let currentSubject = null
 let subjects = ['Mathematics', 'Physics', 'Chemistry', 'History', 'Literature']
+let draggedSubject = null
 let currentFileId = null
 let ctxTargetSubject = null
 let ctxTargetFileId = null
@@ -48,6 +50,13 @@ let lastDeletedAction = null
 let undoToastTimer = null
 
 const SUBJECT_COLORS = ['#d4f57a','#67e8f9','#c084fc','#fb923c','#f472b6','#34d399','#facc15','#f87171']
+const GRADE_SYSTEMS = Object.freeze({
+  'F-A': ['F', 'D', 'C', 'B', 'A'],
+  '1-5': ['1', '2', '3', '4', '5'],
+  '5-1': ['5', '4', '3', '2', '1'],
+  '1-10': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+  '10-1': ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1']
+})
 
 // data shape:
 // streak: { count, lastDate, history: { 'YYYY-MM-DD': true } }
@@ -64,7 +73,7 @@ const data = {
   grades: {},
   subjectColors: {},
   reviewLog: {},
-  settings: { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210 }
+  settings: { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210, language: 'en', gradingSystem: 'F-A' }
 }
 
 // ── THEME ──
@@ -100,6 +109,63 @@ function applyTheme() {
 // ── HELPERS ──
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
 function todayStr() { return new Date().toISOString().slice(0, 10) }
+function appLocale() { return data.settings.language === 'hr' ? 'hr-HR' : 'en-GB' }
+function subjectLabel(name) {
+  if (data.settings.language !== 'hr') return name
+  const labels = { Mathematics: 'Matematika', Physics: 'Fizika', Chemistry: 'Kemija', History: 'Povijest', Literature: 'Književnost' }
+  return Object.hasOwn(labels, name) ? labels[name] : name
+}
+function groupLabel(name) {
+  if (data.settings.language !== 'hr') return name
+  return name === 'All' ? 'Sve' : name === 'General' ? 'Općenito' : name
+}
+function applyLanguage() {
+  data.settings.language = data.settings.language === 'hr' ? 'hr' : 'en'
+  document.getElementById('languageSelect').value = data.settings.language
+  window.KryptI18n.setLanguage(data.settings.language)
+  renderSubjects()
+  updateDate()
+  updateDashboard()
+  renderSchedule()
+  renderProgress()
+  if (currentSubject && !document.getElementById('notesFileView').classList.contains('hidden')) {
+    renderFileList(document.getElementById('notesSearch').value)
+  }
+  if (currentSubject && fcMode === 'list') renderFlashcardList()
+  if (currentSubject && document.getElementById('page-grades').classList.contains('active')) renderGrades()
+}
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+}
+function sanitizeNoteHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html')
+  const allowed = new Set(['P', 'DIV', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SPAN', 'IMG'])
+  const clean = node => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType !== Node.ELEMENT_NODE) continue
+      if (!allowed.has(child.tagName)) { child.replaceWith(...Array.from(child.childNodes)); continue }
+      for (const attr of Array.from(child.attributes)) {
+        if (child.tagName === 'IMG' && attr.name === 'src' && /^data:image\/(png|jpeg|gif|webp);base64,/i.test(attr.value)) continue
+        if (attr.name === 'class' && ['img-wrap', 'img-inner'].includes(attr.value)) continue
+        if (attr.name === 'style') {
+          const keep = []
+          for (const prop of ['text-align', 'font-family', 'font-size', 'width', 'max-width', 'display']) {
+            const value = child.style.getPropertyValue(prop).trim()
+            if (value && !/[<>"']/g.test(value)) keep.push(`${prop}:${value}`)
+          }
+          if (keep.length) child.setAttribute('style', keep.join(';'))
+          else child.removeAttribute('style')
+          continue
+        }
+        child.removeAttribute(attr.name)
+      }
+      if (child.tagName === 'IMG' && !child.hasAttribute('src')) { child.remove(); continue }
+      clean(child)
+    }
+  }
+  clean(doc.body)
+  return doc.body.innerHTML
+}
 
 function getFiles(subject) {
   if (!data.notes[subject]) data.notes[subject] = []
@@ -110,7 +176,7 @@ function getCards(subject) {
   return data.flashcards[subject]
 }
 function getGrades(subject) {
-  if (!data.grades[subject]) data.grades[subject] = { entries: [], target: null }
+  if (!data.grades[subject]) data.grades[subject] = { entries: [], targetScore: null }
   return data.grades[subject]
 }
 
@@ -161,12 +227,27 @@ function renderSidebarStreak() {
 
 // ── PERSISTENCE ──
 async function loadFromDisk() {
-  let saved = null
+  let result
   try {
-    saved = await ipcRenderer.invoke('load-data')
+    result = await window.krypt.load()
   } catch (err) {
     console.error('loadFromDisk error:', err)
+    result = { status: 'unreadable', message: 'KRYPT could not access its saved data.' }
   }
+  if (result.status === 'unreadable') {
+    dataWritable = false
+    recoveryNotice = result.message
+    document.getElementById('recoveryDetails').textContent = `${result.message}${result.primaryError ? ` Main file: ${result.primaryError}` : ''}${result.backupError ? ` Backup: ${result.backupError}` : ''}`
+    document.getElementById('recoveryOverlay').classList.remove('hidden')
+    return
+  }
+  dataWritable = true
+  if (result.status === 'recovered') {
+    recoveryNotice = `KRYPT recovered the backup. ${result.message || 'Check the main data file.'}`
+    document.getElementById('recoveryBannerText').textContent = recoveryNotice
+    document.getElementById('recoveryBanner').classList.remove('hidden')
+  }
+  const saved = result.data
   if (saved) {
     if (saved.subjects) subjects = saved.subjects
     if (saved.notes) Object.assign(data.notes, saved.notes)
@@ -179,6 +260,7 @@ async function loadFromDisk() {
     if (saved.reviewLog) Object.assign(data.reviewLog, saved.reviewLog)
     if (saved.settings) Object.assign(data.settings, saved.settings)
     if (typeof data.settings.sidebarWidth !== 'number') data.settings.sidebarWidth = 210
+    if (!Object.hasOwn(GRADE_SYSTEMS, data.settings.gradingSystem)) data.settings.gradingSystem = 'F-A'
   }
   currentSubject = subjects[0] || 'General'
   currentTaskView = (data.settings && data.settings.taskView) || 'list'
@@ -189,14 +271,16 @@ async function loadFromDisk() {
   computeStreak()
   applyTheme()
   applySidebarWidthFromSettings()
+  applyLanguage()
 }
 
 let diskSaveTimer = null
 function scheduleSave() {
+  if (!dataWritable) return
   clearTimeout(diskSaveTimer)
   diskSaveTimer = setTimeout(async () => {
     try {
-      const ok = await ipcRenderer.invoke('save-data', {
+      const ok = await window.krypt.save({
         subjects,
         notes: data.notes,
         tasks: data.tasks,
@@ -216,8 +300,29 @@ function scheduleSave() {
   }, 600)
 }
 
+function currentDataExport() {
+  return { subjects, notes: data.notes, tasks: data.tasks, schedule: data.schedule, flashcards: data.flashcards, streak: data.streak, grades: data.grades, subjectColors: data.subjectColors, reviewLog: data.reviewLog, settings: data.settings }
+}
+function applyImportedData(saved) {
+  subjects = saved.subjects
+  for (const key of ['notes', 'tasks', 'flashcards', 'grades', 'subjectColors', 'reviewLog']) data[key] = saved[key] || {}
+  for (const key of ['schedule', 'streak', 'settings']) data[key] = saved[key] || data[key]
+  if (!Object.hasOwn(GRADE_SYSTEMS, data.settings.gradingSystem)) data.settings.gradingSystem = 'F-A'
+  dataWritable = true
+  currentFileId = null
+  currentTaskView = (data.settings && data.settings.taskView) || 'list'
+  document.getElementById('recoveryOverlay').classList.add('hidden')
+  currentSubject = subjects[0] || 'General'
+  applyTheme()
+  applyLanguage()
+  renderSubjects(); updateSubjectLabels(); showFileList(); renderTasks(); renderSchedule(); updateDashboard(); renderSidebarStreak(); updateScheduleBadge()
+  renderFlashcardList(); renderGrades(); renderProgress()
+  scheduleSave()
+}
+
 // ── BOOT ──
 document.addEventListener('DOMContentLoaded', async () => {
+  window.KryptI18n.start()
   await loadFromDisk()
   updateDate()
   renderSubjects()
@@ -228,6 +333,68 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateTimerProgress()
   renderSidebarStreak()
   updateScheduleBadge()
+
+  const restoreData = async () => {
+    const result = await window.krypt.importData(data.settings.language)
+    if (result.canceled) return
+    if (result.error) { showError(result.error); return }
+    if (result.ok) { applyImportedData(result.data); showError('KRYPT data restored.') }
+  }
+  document.getElementById('exportDataBtn').addEventListener('click', async () => {
+    if (!dataWritable) { showError('Choose a recovery option before saving or exporting data.'); return }
+    try {
+      saveCurrentFile()
+      clearTimeout(diskSaveTimer)
+      const saved = await window.krypt.save(currentDataExport())
+      if (!saved) { showError('Could not save current changes before creating the backup.'); return }
+      const result = await window.krypt.exportData(data.settings.language)
+      if (result.error) showError(result.error)
+      else if (result.ok) showError('Backup exported successfully.')
+    } catch (error) { showError('Backup failed: ' + error.message) }
+  })
+  document.getElementById('importDataBtn').addEventListener('click', restoreData)
+  document.getElementById('recoveryImportBtn').addEventListener('click', restoreData)
+  document.getElementById('recoveryFolderBtn').addEventListener('click', () => window.krypt.showDataDirectory())
+  document.getElementById('recoveryDismissBtn').addEventListener('click', () => document.getElementById('recoveryBanner').classList.add('hidden'))
+  document.getElementById('recoveryStartFreshBtn').addEventListener('click', async () => {
+    subjects = ['Mathematics', 'Physics', 'Chemistry', 'History', 'Literature']
+    for (const key of Object.keys(data)) {
+      if (key === 'schedule') data[key] = []
+      else if (key === 'streak') data[key] = { count: 0, lastDate: null, history: {} }
+      else if (key === 'settings') data[key] = { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210, language: 'en', gradingSystem: 'F-A' }
+      else data[key] = {}
+    }
+    dataWritable = true
+    document.getElementById('recoveryOverlay').classList.add('hidden')
+    const saved = await window.krypt.save(currentDataExport())
+    if (!saved) {
+      dataWritable = false
+      document.getElementById('recoveryOverlay').classList.remove('hidden')
+      showError('KRYPT could not save the new workspace. Check folder permissions or disk space.')
+      return
+    }
+    currentSubject = subjects[0]
+    applyTheme(); applyLanguage(); renderSubjects(); renderTasks(); renderSchedule(); updateDashboard(); renderSidebarStreak(); updateScheduleBadge()
+    showError('Started a new workspace. The unreadable files remain in the data folder.')
+  })
+  document.getElementById('showDataFolderBtn').addEventListener('click', async () => {
+    const error = await window.krypt.showDataDirectory()
+    if (error) showError(error)
+  })
+  document.getElementById('chooseDataFolderBtn').addEventListener('click', async () => {
+    if (!dataWritable) { showError('Choose a recovery option before changing the data folder.'); return }
+    saveCurrentFile()
+    clearTimeout(diskSaveTimer)
+    const saved = await window.krypt.save(currentDataExport())
+    if (!saved) { showError('Could not save current changes before changing the data folder.'); return }
+    const result = await window.krypt.chooseDataDirectory(data.settings.language)
+    if (result.error) { showError(result.error); return }
+    if (result.ok) {
+      document.getElementById('dataFolderPath').textContent = result.path
+      showError('Data folder changed. Current workspace was copied there.')
+    }
+  })
+  window.krypt.getDataDirectory().then(path => { document.getElementById('dataFolderPath').textContent = path })
 
   // Confirm delete modal
   document.getElementById('confirmCancelBtn').addEventListener('click', closeConfirm)
@@ -242,17 +409,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     hideUndoToast()
   })
 
-  // Keyboard shortcuts modal
-  document.getElementById('shortcutsBtn').addEventListener('click', () => {
-    document.getElementById('shortcutsModal').classList.remove('hidden')
-  })
-  document.getElementById('shortcutsCloseBtn').addEventListener('click', () => {
-    document.getElementById('shortcutsModal').classList.add('hidden')
-  })
-
   // Note search
   document.getElementById('notesSearch').addEventListener('input', e => renderFileList(e.target.value))
   document.getElementById('notesSearchAll').addEventListener('change', () => renderFileList(document.getElementById('notesSearch').value))
+  document.getElementById('symbolPickerBtn').addEventListener('click', toggleSymbolPicker)
+  document.querySelectorAll('.kanban-col').forEach(col => {
+    col.addEventListener('dragover', allowDrop)
+    col.addEventListener('drop', e => handleDrop(e, col.dataset.status))
+  })
 
   // Multi-file selection
   document.getElementById('selectAllBtn').addEventListener('click', toggleSelectAll)
@@ -266,7 +430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           renderSettingsPanel()
           return
         }
-        switchPage(btn.dataset.page)
+        if (btn.dataset.page) switchPage(btn.dataset.page)
       })
   )
 
@@ -450,22 +614,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Grades
   document.getElementById('gradeAddBtn').addEventListener('click', addGrade)
-  document.getElementById('gradeNameInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('gradeAchievedInput').focus() })
-  document.getElementById('gradeAchievedInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('gradeMaxInput').focus() })
-  document.getElementById('gradeMaxInput').addEventListener('keydown', e => { if (e.key === 'Enter') addGrade() })
+  document.getElementById('gradeNameInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('gradeValueInput').focus() })
+  document.getElementById('gradeValueInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('gradePercentInput').focus() })
+  document.getElementById('gradePercentInput').addEventListener('keydown', e => { if (e.key === 'Enter') addGrade() })
   document.getElementById('gradeSetTargetBtn').addEventListener('click', setGradeTarget)
   document.getElementById('gradeTargetInput').addEventListener('keydown', e => { if (e.key === 'Enter') setGradeTarget() })
 
-  // Close settings panel when clicking outside
-  document.addEventListener('click', e => {
-    const panel = document.getElementById('settingsPanel')
-    if (!panel.classList.contains('hidden') && !panel.contains(e.target) && e.target.id !== 'settingsGearBtn') {
-      panel.classList.add('hidden')
-    }
+  // Keep the current page visible beneath Settings.
+  const settingsPanel = document.getElementById('settingsPanel')
+  document.getElementById('settingsCloseBtn').addEventListener('click', () => settingsPanel.classList.add('hidden'))
+  settingsPanel.addEventListener('click', e => {
+    if (e.target === settingsPanel) settingsPanel.classList.add('hidden')
+  })
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !settingsPanel.classList.contains('hidden')) settingsPanel.classList.add('hidden')
   })
 
   // Accent color picker
   document.getElementById('accentPicker').addEventListener('input', e => setAccent(e.target.value))
+  document.getElementById('languageSelect').addEventListener('change', e => {
+    data.settings.language = e.target.value
+    applyLanguage()
+    scheduleSave()
+  })
+  document.getElementById('gradingSystemSelect').addEventListener('change', e => {
+    data.settings.gradingSystem = e.target.value
+    renderGrades()
+    scheduleSave()
+  })
   initSidebarResize()
   const imgMenu = document.getElementById('imageCtxMenu')
   if (imgMenu) {
@@ -588,8 +764,9 @@ function renderSubjects() {
   const list = document.getElementById('subjectList')
   list.innerHTML = subjects.map(s => `
     <div class="subject-row ${s === currentSubject ? 'active' : ''}">
-      <button class="subject-btn" data-subject="${s}">${s}</button>
-      <button class="subject-ctx-btn" data-subject="${s}" title="Options">⋯</button>
+      <button class="subject-drag-handle" type="button" draggable="true" data-subject="${escapeHtml(s)}" aria-label="Reorder ${escapeHtml(subjectLabel(s))}" title="Drag to reorder; arrow keys also work">⠿</button>
+      <button class="subject-btn" data-subject="${escapeHtml(s)}">${escapeHtml(subjectLabel(s))}</button>
+      <button class="subject-ctx-btn" data-subject="${escapeHtml(s)}" title="Options">⋯</button>
     </div>
   `).join('')
 
@@ -602,6 +779,79 @@ function renderSubjects() {
   list.querySelectorAll('.subject-row').forEach(row =>
       row.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); showCtxMenu(e, 'ctxMenu', () => { ctxTargetSubject = row.querySelector('.subject-btn').dataset.subject }) })
   )
+  list.querySelectorAll('.subject-drag-handle').forEach(handle => {
+    handle.addEventListener('dragstart', e => {
+      draggedSubject = handle.dataset.subject
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', draggedSubject)
+      e.dataTransfer.setDragImage(handle.closest('.subject-row'), 12, 16)
+      requestAnimationFrame(() => {
+        if (draggedSubject === handle.dataset.subject) handle.closest('.subject-row').classList.add('dragging')
+      })
+    })
+    handle.addEventListener('dragend', clearSubjectDrag)
+    handle.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+      const index = subjects.indexOf(handle.dataset.subject)
+      const next = index + (e.key === 'ArrowUp' ? -1 : 1)
+      if (next < 0 || next >= subjects.length) return
+      e.preventDefault()
+      reorderSubject(handle.dataset.subject, subjects[next], e.key === 'ArrowDown')
+      handle.focus()
+    })
+  })
+  list.querySelectorAll('.subject-row').forEach(row => {
+    row.addEventListener('dragover', e => {
+      if (!draggedSubject) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      clearSubjectDropCue()
+      if (row.querySelector('.subject-btn').dataset.subject !== draggedSubject) {
+        row.classList.add(e.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2 ? 'drop-after' : 'drop-before')
+      }
+    })
+    row.addEventListener('drop', e => {
+      if (!draggedSubject) return
+      e.preventDefault()
+      const target = row.querySelector('.subject-btn').dataset.subject
+      const after = e.clientY >= row.getBoundingClientRect().top + row.offsetHeight / 2
+      reorderSubject(draggedSubject, target, after)
+      clearSubjectDrag()
+    })
+  })
+}
+
+function clearSubjectDropCue() {
+  document.querySelectorAll('#subjectList .subject-row').forEach(row => row.classList.remove('drop-before', 'drop-after'))
+}
+
+function clearSubjectDrag() {
+  draggedSubject = null
+  clearSubjectDropCue()
+  document.querySelectorAll('#subjectList .subject-row.dragging').forEach(row => row.classList.remove('dragging'))
+}
+
+function reorderSubject(name, target, after) {
+  const from = subjects.indexOf(name)
+  if (from < 0 || name === target) return
+  const list = document.getElementById('subjectList')
+  const rows = Array.from(list.querySelectorAll('.subject-row'))
+  const movedRow = rows.find(row => row.querySelector('.subject-btn').dataset.subject === name)
+  const targetRow = rows.find(row => row.querySelector('.subject-btn').dataset.subject === target)
+  if (!movedRow || !targetRow) return
+  const oldTops = new Map(rows.map(row => [row, row.getBoundingClientRect().top]))
+  subjects.splice(from, 1)
+  const to = subjects.indexOf(target) + (after ? 1 : 0)
+  subjects.splice(to, 0, name)
+  if (to === from) return
+  list.insertBefore(movedRow, after ? targetRow.nextSibling : targetRow)
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    rows.forEach(row => {
+      const offset = oldTops.get(row) - row.getBoundingClientRect().top
+      if (offset) row.animate([{ transform: `translateY(${offset}px)` }, { transform: 'translateY(0)' }], { duration: 200, easing: 'ease-out' })
+    })
+  }
+  scheduleSave()
 }
 
 function selectSubject(name) {
@@ -624,6 +874,7 @@ function addSubject() {
   const input = document.getElementById('newSubjectInput')
   const name = input.value.trim()
   if (!name) return
+  if (['__proto__', 'prototype', 'constructor'].includes(name)) { showError('That subject name is reserved.'); return }
   if (subjects.includes(name)) { showError(`"${name}" already exists.`); return }
   subjects.push(name)
   // assign next colour in rotation
@@ -639,6 +890,7 @@ function addSubject() {
 
 function renameSubject(oldName, newName) {
   if (!newName || newName === oldName) return
+  if (['__proto__', 'prototype', 'constructor'].includes(newName)) { showError('That subject name is reserved.'); return }
   if (subjects.includes(newName)) { showError(`"${newName}" already exists.`); return }
   const idx = subjects.indexOf(oldName)
   if (idx === -1) return
@@ -685,12 +937,13 @@ function deleteSubject(name) {
 }
 
 function updateSubjectLabels() {
-  document.getElementById('dashSubjectLabel').textContent = currentSubject
-  document.getElementById('notesSubjectLabel').textContent = currentSubject
-  document.getElementById('editorSubjectLabel').textContent = currentSubject
-  document.getElementById('tasksSubjectLabel').textContent = currentSubject
-  document.getElementById('fcSubjectLabel').textContent = currentSubject
-  document.getElementById('gradesSubjectLabel').textContent = currentSubject
+  const label = subjectLabel(currentSubject)
+  document.getElementById('dashSubjectLabel').textContent = label
+  document.getElementById('notesSubjectLabel').textContent = label
+  document.getElementById('editorSubjectLabel').textContent = label
+  document.getElementById('tasksSubjectLabel').textContent = label
+  document.getElementById('fcSubjectLabel').textContent = label
+  document.getElementById('gradesSubjectLabel').textContent = label
 }
 
 // ── CONTEXT MENUS ──
@@ -750,7 +1003,7 @@ function renderNoteGroupChips() {
   const groups = getNoteGroups(currentSubject)
   const chips = ['All', ...groups]
   row.innerHTML = chips.map(g =>
-      `<button class="group-chip ${activeNoteGroup === g ? 'active' : ''}" data-group="${g}">${g}</button>`
+      `<button class="group-chip ${activeNoteGroup === g ? 'active' : ''}" data-group="${escapeHtml(g)}">${escapeHtml(groupLabel(g))}</button>`
   ).join('') + `<button class="group-chip group-chip-add" id="noteGroupAddBtn">+ New Group</button>`
 
   row.querySelectorAll('.group-chip[data-group]').forEach(btn => {
@@ -801,13 +1054,13 @@ function renderFileList(searchQuery = '') {
     empty.textContent = 'No files match your search in any subject.'
     list.innerHTML = results.map(f => {
       const preview = stripHtml(f.content).slice(0, 80).trim() || 'Empty file'
-      const date = f.updatedAt ? new Date(f.updatedAt).toLocaleDateString() : ''
+      const date = f.updatedAt ? new Date(f.updatedAt).toLocaleDateString(appLocale()) : ''
       return `
-        <div class="file-item" data-id="${f.id}" data-subject="${f.__subject}">
+        <div class="file-item" data-id="${escapeHtml(f.id)}" data-subject="${escapeHtml(f.__subject)}">
           <div class="file-icon">📄</div>
           <div class="file-info">
-            <div class="file-name">${f.name} <span class="file-group-tag">${f.__subject}</span></div>
-            <div class="file-meta">${preview}${date ? ' · ' + date : ''}</div>
+            <div class="file-name">${escapeHtml(f.name)} <span class="file-group-tag">${escapeHtml(subjectLabel(f.__subject))}</span></div>
+            <div class="file-meta">${escapeHtml(preview)}${date ? ' · ' + date : ''}</div>
           </div>
         </div>
       `
@@ -832,17 +1085,17 @@ function renderFileList(searchQuery = '') {
 
   list.innerHTML = files.map(f => {
     const preview = stripHtml(f.content).slice(0, 80).trim() || 'Empty file'
-    const date = f.updatedAt ? new Date(f.updatedAt).toLocaleDateString() : ''
+    const date = f.updatedAt ? new Date(f.updatedAt).toLocaleDateString(appLocale()) : ''
     const checked = selectedFiles.has(f.id)
     return `
-      <div class="file-item ${checked ? 'file-selected' : ''}" data-id="${f.id}">
-        <input type="checkbox" class="file-checkbox" data-id="${f.id}" ${checked ? 'checked' : ''}>
+      <div class="file-item ${checked ? 'file-selected' : ''}" data-id="${escapeHtml(f.id)}">
+        <input type="checkbox" class="file-checkbox" data-id="${escapeHtml(f.id)}" ${checked ? 'checked' : ''}>
         <div class="file-icon">📄</div>
         <div class="file-info">
-          <div class="file-name">${f.name} <span class="file-group-tag">${f.group || 'General'}</span></div>
-          <div class="file-meta">${preview}${date ? ' · ' + date : ''}</div>
+        <div class="file-name">${escapeHtml(f.name)} <span class="file-group-tag">${escapeHtml(groupLabel(f.group || 'General'))}</span></div>
+          <div class="file-meta">${escapeHtml(preview)}${date ? ' · ' + date : ''}</div>
         </div>
-        <button class="file-ctx-btn" data-id="${f.id}" title="Options">⋯</button>
+        <button class="file-ctx-btn" data-id="${escapeHtml(f.id)}" title="Options">⋯</button>
       </div>
     `
   }).join('')
@@ -936,7 +1189,7 @@ function deleteSelectedFiles() {
 
 function stripHtml(html) {
   const tmp = document.createElement('div')
-  tmp.innerHTML = html
+  tmp.innerHTML = sanitizeNoteHtml(html)
   return tmp.innerText || ''
 }
 
@@ -958,7 +1211,7 @@ function openFile(id) {
   document.getElementById('notesEditorView').classList.remove('hidden')
   document.getElementById('editorFilename').textContent = file.name
   const editor = document.getElementById('notesArea')
-  editor.innerHTML = file.content
+  editor.innerHTML = sanitizeNoteHtml(file.content)
   hydrateEditorEntities(editor)
   updateCharCount()
   updateSubjectLabels()
@@ -979,7 +1232,7 @@ function saveCurrentFile() {
   if (!currentFileId) return
   const file = getFiles(currentSubject).find(f => f.id === currentFileId)
   if (!file) return
-  file.content = document.getElementById('notesArea').innerHTML
+  file.content = sanitizeNoteHtml(document.getElementById('notesArea').innerHTML)
   file.updatedAt = Date.now()
   scheduleSave()
 }
@@ -1227,9 +1480,9 @@ function renderTasks() {
     empty.style.display = tasks.length === 0 ? 'block' : 'none'
     list.innerHTML = tasks.map((t, i) => `
       <li class="task-item ${t.done ? 'done' : ''}">
-        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask(${i})">
-        <span>${t.text}${recurLabel(t)}</span>
-        <button class="task-delete" onclick="deleteTask(${i})">×</button>
+        <input type="checkbox" data-task-toggle="${i}" ${t.done ? 'checked' : ''}>
+        <span><span class="task-user-text">${escapeHtml(t.text)}</span>${recurLabel(t)}</span>
+        <button class="task-delete" data-task-delete="${i}">×</button>
       </li>
     `).join('')
   } else {
@@ -1242,12 +1495,12 @@ function renderTasks() {
 
     tasks.forEach((t, i) => {
       const cardHtml = `
-        <div class="kanban-card" draggable="true" ondragstart="handleDragStart(event, ${i})">
-          <div class="kanban-card-text">${t.text}${recurLabel(t)}</div>
+        <div class="kanban-card" draggable="true" data-task-index="${i}">
+          <div class="kanban-card-text"><span class="kanban-user-text">${escapeHtml(t.text)}</span>${recurLabel(t)}</div>
           <div class="kanban-card-actions">
-            ${t.status !== 'todo' ? `<button class="kanban-card-btn" onclick="moveTask(${i}, -1)" title="Move left">←</button>` : ''}
-            ${t.status !== 'done' ? `<button class="kanban-card-btn" onclick="moveTask(${i}, 1)" title="Move right">→</button>` : ''}
-            <button class="kanban-card-btn danger" onclick="deleteTask(${i})" title="Delete">×</button>
+            ${t.status !== 'todo' ? `<button class="kanban-card-btn" data-task-move="-1" title="Move left">←</button>` : ''}
+            ${t.status !== 'done' ? `<button class="kanban-card-btn" data-task-move="1" title="Move right">→</button>` : ''}
+            <button class="kanban-card-btn danger" data-task-delete="${i}" title="Delete">×</button>
           </div>
         </div>
       `
@@ -1263,7 +1516,11 @@ function renderTasks() {
     document.getElementById('kanbanCountTodo').textContent = todoCards.length
     document.getElementById('kanbanCountInProgress').textContent = progressCards.length
     document.getElementById('kanbanCountDone').textContent = doneCards.length
+    document.querySelectorAll('.kanban-card').forEach(card => card.addEventListener('dragstart', e => handleDragStart(e, Number(card.dataset.taskIndex))))
+    document.querySelectorAll('[data-task-move]').forEach(btn => btn.addEventListener('click', () => moveTask(Number(btn.closest('.kanban-card').dataset.taskIndex), Number(btn.dataset.taskMove))))
   }
+  document.querySelectorAll('[data-task-toggle]').forEach(input => input.addEventListener('change', () => toggleTask(Number(input.dataset.taskToggle))))
+  document.querySelectorAll('[data-task-delete]').forEach(button => button.addEventListener('click', () => deleteTask(Number(button.dataset.taskDelete))))
   updateDashboard()
 }
 
@@ -1480,18 +1737,19 @@ function renderSchedule() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const diff = Math.round((d - today) / 86400000)
     const day = d.getDate().toString().padStart(2, '0')
-    const month = d.toLocaleString('default', { month: 'short' }).toUpperCase()
+    const month = d.toLocaleString(appLocale(), { month: 'short' }).toUpperCase()
     const countdownClass = diff === 0 ? 'today' : diff > 0 && diff <= 3 ? 'soon' : ''
     const countdownText = diff === 0 ? 'Today!' : diff < 0 ? 'Past' : `In ${diff} day${diff !== 1 ? 's' : ''}`
     const idx = data.schedule.indexOf(t)
     return `
       <div class="test-item">
         <div class="test-date-block"><div class="test-day">${day}</div><div class="test-month">${month}</div></div>
-        <div class="test-info"><div class="test-name">${t.name}</div><div class="test-subject">${t.subject}</div></div>
+        <div class="test-info"><div class="test-name">${escapeHtml(t.name)}</div><div class="test-subject">${escapeHtml(t.subject)}</div></div>
         <div class="test-countdown ${countdownClass}">${countdownText}</div>
-        <button class="test-delete" onclick="deleteTest(${idx})">×</button>
+        <button class="test-delete" data-test-delete="${idx}">×</button>
       </div>`
   }).join('')
+  list.querySelectorAll('[data-test-delete]').forEach(button => button.addEventListener('click', () => deleteTest(Number(button.dataset.testDelete))))
   updateDashboard()
 }
 
@@ -1548,7 +1806,7 @@ function updateDashboard() {
 
 function updateDate() {
   document.getElementById('dateDisplay').textContent =
-      new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+      new Date().toLocaleDateString(appLocale(), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 // ── FLASHCARDS ──
@@ -1563,7 +1821,7 @@ function renderFcGroupChips() {
   const groups = getFcGroups(currentSubject)
   const chips = ['All', ...groups]
   row.innerHTML = chips.map(g =>
-      `<button class="group-chip ${activeFcGroup === g ? 'active' : ''}" data-group="${g}">${g}</button>`
+      `<button class="group-chip ${activeFcGroup === g ? 'active' : ''}" data-group="${escapeHtml(g)}">${escapeHtml(groupLabel(g))}</button>`
   ).join('') + `<button class="group-chip group-chip-add" id="fcGroupAddBtn">+ New Group</button>`
 
   row.querySelectorAll('.group-chip[data-group]').forEach(btn => {
@@ -1651,12 +1909,13 @@ function renderFlashcardList() {
   list.innerHTML = cards.map(c => `
     <div class="fc-card-row">
       <div class="fc-card-content">
-        <div class="fc-front">${c.front} <span class="fc-group-tag">${c.group || 'General'}</span></div>
-        <div class="fc-back">${c.back}</div>
+        <div class="fc-front">${escapeHtml(c.front)} <span class="fc-group-tag">${escapeHtml(groupLabel(c.group || 'General'))}</span></div>
+        <div class="fc-back">${escapeHtml(c.back)}</div>
       </div>
-      <button class="fc-delete-btn" onclick="deleteCard('${c.id}')">×</button>
+      <button class="fc-delete-btn" data-card-id="${escapeHtml(c.id)}">×</button>
     </div>
   `).join('')
+  list.querySelectorAll('[data-card-id]').forEach(button => button.addEventListener('click', () => deleteCard(button.dataset.cardId)))
 }
 
 function showCardForm() {
@@ -1712,6 +1971,7 @@ function startReview() {
   const cards = getGroupFilteredCards()
   fcQueue = cards.filter(c => !c.due || c.due <= Date.now())
   if (fcQueue.length === 0) return
+  fcMode = 'review'
   fcIdx = 0
   fcFlipped = false
   document.getElementById('fcListView').classList.add('hidden')
@@ -1726,6 +1986,7 @@ function startReviewAll() {
   const cards = getGroupFilteredCards()
   fcQueue = [...cards]
   if (fcQueue.length === 0) return
+  fcMode = 'review'
   fcIdx = 0
   fcFlipped = false
   document.getElementById('fcListView').classList.add('hidden')
@@ -1793,9 +2054,10 @@ function finishReview() {
       <div class="fc-finish-icon">✓</div>
       <div class="fc-finish-title">Session complete!</div>
       <div class="fc-finish-sub">${reviewCount} card${reviewCount !== 1 ? 's' : ''} reviewed</div>
-      <button class="btn-accent-outline" onclick="renderFlashcardList()" style="margin-top:24px">Back to deck</button>
+      <button class="btn-accent-outline" data-back-to-deck style="margin-top:24px">Back to deck</button>
     </div>
   `
+  document.querySelector('[data-back-to-deck]').addEventListener('click', renderFlashcardList)
   renderSidebarStreak()
 }
 
@@ -1831,7 +2093,7 @@ function renderHeatmap() {
     const done = !!data.streak.history[dateStr]
     const isToday = dateStr === todayStr()
     const d = new Date(dateStr + 'T00:00:00')
-    const label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    const label = d.toLocaleDateString(appLocale(), { day: 'numeric', month: 'short' })
     return `<div class="heatmap-cell ${done ? 'done' : ''} ${isToday ? 'is-today' : ''}" title="${label}${done ? ' — studied ✓' : ''}"></div>`
   }).join('')
 }
@@ -1854,7 +2116,7 @@ function renderRetentionChart() {
     const log = data.reviewLog[dateStr]
     const pct = log && log.total > 0 ? Math.round((log.correct / log.total) * 100) : 0
     const d = new Date(dateStr + 'T00:00:00')
-    const label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    const label = d.toLocaleDateString(appLocale(), { day: 'numeric', month: 'short' })
     const title = log && log.total > 0 ? `${label}: ${pct}% (${log.correct}/${log.total})` : `${label}: no reviews`
     return `
       <div class="retention-bar-col" title="${title}">
@@ -1866,51 +2128,96 @@ function renderRetentionChart() {
 }
 
 // ── GRADES ──
+function gradeSystem() { return GRADE_SYSTEMS[data.settings.gradingSystem] || GRADE_SYSTEMS['F-A'] }
+function gradeStep(index, labels = gradeSystem()) { return index / (labels.length - 1) }
+function nearestGradeIndex(score, labels = gradeSystem()) {
+  return Math.max(0, Math.min(labels.length - 1, Math.round(score * (labels.length - 1) + Number.EPSILON * labels.length)))
+}
+function gradeLabel(score, labels = gradeSystem()) { return labels[nearestGradeIndex(score, labels)] }
+function gradeColorClass(score) { return `grade-level-${Math.max(0, Math.min(4, Math.round(score * 4)))}` }
+function averageGradeLabel(score, labels = gradeSystem()) {
+  if (data.settings.gradingSystem === 'F-A') return gradeLabel(score, labels)
+  const value = Number(labels[0]) + (Number(labels[labels.length - 1]) - Number(labels[0])) * score
+  return String(Math.round(value * 10) / 10)
+}
+function legacyPercentScore(percentage) {
+  return percentage >= 90 ? 1 : percentage >= 80 ? 0.75 : percentage >= 70 ? 0.5 : percentage >= 60 ? 0.25 : 0
+}
+function entryGradeScore(entry) {
+  if (Number.isFinite(entry.gradeScore)) return Math.max(0, Math.min(1, entry.gradeScore))
+  // Older workspaces stored the calculated percentage in `value`.
+  if (entry.gradeScore === undefined && Number.isFinite(entry.value)) return legacyPercentScore(entry.value)
+  return null
+}
+function entryPercentage(entry) {
+  if (entry.percentage === null) return null
+  if (Number.isFinite(entry.percentage)) return entry.percentage
+  if (Number.isFinite(entry.value)) return entry.value
+  return null
+}
+function targetGradeScore(grades, labels = gradeSystem()) {
+  const stored = Object.hasOwn(grades, 'targetScore') ? grades.targetScore : Number.isFinite(grades.target) ? legacyPercentScore(grades.target) : null
+  return Number.isFinite(stored) ? gradeStep(nearestGradeIndex(stored, labels), labels) : null
+}
+function renderGradeChoices(grades, labels) {
+  const gradeSelect = document.getElementById('gradeValueInput')
+  const previous = gradeSelect.value
+  const options = labels.map((label, index) => `<option value="${gradeStep(index, labels)}">${escapeHtml(label)}</option>`).join('')
+  gradeSelect.innerHTML = '<option value="">Select grade</option>' + options
+  if (previous !== '') gradeSelect.value = String(gradeStep(nearestGradeIndex(Number(previous), labels), labels))
+
+  const targetSelect = document.getElementById('gradeTargetInput')
+  targetSelect.innerHTML = '<option value="">No target</option>' + options
+  const target = targetGradeScore(grades, labels)
+  targetSelect.value = target === null ? '' : String(target)
+}
 function renderGrades() {
   updateSubjectLabels()
-  const { entries, target } = getGrades(currentSubject)
+  const grades = getGrades(currentSubject)
+  const { entries } = grades
+  const labels = gradeSystem()
+  const target = targetGradeScore(grades, labels)
+  renderGradeChoices(grades, labels)
 
-  // target input
-  document.getElementById('gradeTargetInput').value = target !== null ? target : ''
+  const scores = entries.map(entryGradeScore).filter(score => score !== null)
+  const avg = scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null
+  const roundedAvg = avg === null ? null : gradeStep(nearestGradeIndex(avg, labels), labels)
+  const highest = scores.length ? Math.max(...scores) : null
+  const lowest = scores.length ? Math.min(...scores) : null
 
-  // stats
-  const gradedEntries = entries.filter(e => e.value !== null)
-  const avg = gradedEntries.length
-      ? Math.round(gradedEntries.reduce((s, e) => s + e.value, 0) / gradedEntries.length * 10) / 10
-      : null
-  const highest = gradedEntries.length ? Math.max(...gradedEntries.map(e => e.value)) : null
-  const lowest  = gradedEntries.length ? Math.min(...gradedEntries.map(e => e.value)) : null
-
-  document.getElementById('gradeAvg').textContent    = avg !== null ? avg + '%' : '—'
-  document.getElementById('gradeHighest').textContent = highest !== null ? highest + '%' : '—'
-  document.getElementById('gradeLowest').textContent  = lowest !== null ? lowest + '%' : '—'
+  for (const [id, score, label] of [
+    ['gradeAvg', avg, avg === null ? '—' : averageGradeLabel(avg, labels)],
+    ['gradeHighest', highest, highest === null ? '—' : gradeLabel(highest, labels)],
+    ['gradeLowest', lowest, lowest === null ? '—' : gradeLabel(lowest, labels)]
+  ]) {
+    const element = document.getElementById(id)
+    element.textContent = label
+    element.className = 'grades-stat-num' + (score === null ? '' : ` ${gradeColorClass(score)}`)
+  }
 
   // target gap
   const gapEl = document.getElementById('gradeGapBlock')
   if (target !== null && avg !== null) {
-    const gap = Math.round((target - avg) * 10) / 10
     gapEl.classList.remove('hidden')
     const gapNum = document.getElementById('gradeGapNum')
     const gapDesc = document.getElementById('gradeGapDesc')
-    if (gap <= 0) {
+    if (roundedAvg >= target) {
       gapNum.textContent = '✓ On target'
       gapNum.style.color = 'var(--accent)'
-      gapDesc.textContent = `You're ${Math.abs(gap)}% above your ${target}% goal`
+      gapDesc.textContent = `Average ${averageGradeLabel(avg, labels)} meets target ${gradeLabel(target, labels)}`
     } else {
-      gapNum.textContent = '+' + gap + '% needed'
+      gapNum.textContent = `Need ${gradeLabel(target, labels)}`
       gapNum.style.color = 'var(--danger)'
-      gapDesc.textContent = `${gap}% below your ${target}% target`
+      gapDesc.textContent = `Current average ${averageGradeLabel(avg, labels)}`
     }
   } else {
     gapEl.classList.add('hidden')
   }
 
-  // letter grade
   const letterEl = document.getElementById('gradeLetter')
   if (avg !== null) {
-    const letter = avg >= 90 ? 'A' : avg >= 80 ? 'B' : avg >= 70 ? 'C' : avg >= 60 ? 'D' : 'F'
-    letterEl.textContent = letter
-    letterEl.className = 'grade-letter grade-' + letter
+    letterEl.textContent = gradeLabel(avg, labels)
+    letterEl.className = `grade-letter ${gradeColorClass(avg)}`
   } else {
     letterEl.textContent = '—'
     letterEl.className = 'grade-letter'
@@ -1921,44 +2228,39 @@ function renderGrades() {
   const empty = document.getElementById('gradeEmpty')
   empty.style.display = entries.length === 0 ? 'block' : 'none'
   list.innerHTML = entries.map((e, i) => {
-    const isUngraded = e.value === null
-    const scoreText = isUngraded
-        ? '—'
-        : (e.achieved != null ? `${e.achieved}/${e.max}` : `${e.value}%`)
-    const pctText = isUngraded ? 'Not graded' : `${e.value}%`
-    const valClass = isUngraded ? 'ungraded' : e.value >= (target || 50) ? 'pass' : 'fail'
+    const score = entryGradeScore(e)
+    const percentage = entryPercentage(e)
+    const scoreText = percentage === null ? '—' : `${percentage}%`
+    const gradeText = score === null ? 'Not graded' : gradeLabel(score, labels)
+    const valClass = score === null ? 'ungraded' : gradeColorClass(score)
     return `
     <div class="grade-entry">
-      <span class="grade-entry-name">${e.name}</span>
-      <span class="grade-entry-pts">${scoreText}</span>
-      <span class="grade-entry-val ${valClass}">${pctText}</span>
-      <button class="grade-entry-del" onclick="deleteGrade(${i})">×</button>
+      <span class="grade-entry-name">${escapeHtml(e.name)}</span>
+      <span class="grade-entry-pts">${escapeHtml(scoreText)}</span>
+      <span class="grade-entry-val ${valClass}">${escapeHtml(gradeText)}</span>
+      <button class="grade-entry-del" data-grade-delete="${i}">×</button>
     </div>
   `}).join('')
+  list.querySelectorAll('[data-grade-delete]').forEach(button => button.addEventListener('click', () => deleteGrade(Number(button.dataset.gradeDelete))))
 }
 
 function addGrade() {
   const name = document.getElementById('gradeNameInput').value.trim()
-  const achievedRaw = document.getElementById('gradeAchievedInput').value.trim()
-  const maxRaw = document.getElementById('gradeMaxInput').value.trim()
+  const gradeRaw = document.getElementById('gradeValueInput').value
+  const percentRaw = document.getElementById('gradePercentInput').value.trim()
 
   if (!name) { showError('Please enter an assessment name.'); return }
-
-  // allow '—' or '-' for not graded
-  const notGraded = achievedRaw === '—' || achievedRaw === '-'
-  let value = null
-  if (!notGraded) {
-    const achieved = parseFloat(achievedRaw)
-    const max = parseFloat(maxRaw)
-    if (isNaN(achieved) || isNaN(max) || max <= 0) { showError('Enter valid points — e.g. 45 out of 60.'); return }
-    if (achieved > max) { showError('Achieved points can\'t exceed max points.'); return }
-    value = Math.round((achieved / max) * 1000) / 10 // one decimal %
+  if (gradeRaw === '') { showError('Please select a grade.'); return }
+  const percentage = percentRaw === '' ? null : Number(percentRaw)
+  if (percentage !== null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) {
+    showError('Enter a percentage from 0 to 100, or leave it blank.')
+    return
   }
 
-  getGrades(currentSubject).entries.push({ name, value, achieved: notGraded ? null : parseFloat(achievedRaw), max: notGraded ? null : parseFloat(maxRaw) })
+  getGrades(currentSubject).entries.push({ name, gradeScore: Number(gradeRaw), percentage })
   document.getElementById('gradeNameInput').value = ''
-  document.getElementById('gradeAchievedInput').value = ''
-  document.getElementById('gradeMaxInput').value = ''
+  document.getElementById('gradeValueInput').value = ''
+  document.getElementById('gradePercentInput').value = ''
   document.getElementById('gradeNameInput').focus()
   renderGrades()
   scheduleSave()
@@ -1981,8 +2283,8 @@ function deleteGrade(i) {
 }
 
 function setGradeTarget() {
-  const val = parseFloat(document.getElementById('gradeTargetInput').value)
-  getGrades(currentSubject).target = isNaN(val) ? null : Math.min(100, Math.max(0, val))
+  const value = document.getElementById('gradeTargetInput').value
+  getGrades(currentSubject).targetScore = value === '' ? null : Number(value)
   renderGrades()
   scheduleSave()
 }
@@ -1990,6 +2292,7 @@ function setGradeTarget() {
 // ── SETTINGS PANEL ──
 function renderSettingsPanel() {
   const { theme, accent } = data.settings
+  document.getElementById('gradingSystemSelect').value = data.settings.gradingSystem || 'F-A'
 
   // theme buttons
   document.querySelectorAll('.theme-btn').forEach(btn => {
@@ -2007,8 +2310,9 @@ function renderSettingsPanel() {
   swatchContainer.innerHTML = ACCENT_PRESETS.map(color => `
     <button class="swatch ${accent === color ? 'active' : ''}"
       style="background:${color}"
-      onclick="setAccent('${color}')"></button>
+      data-accent="${color}"></button>
   `).join('')
+  swatchContainer.querySelectorAll('[data-accent]').forEach(button => button.addEventListener('click', () => setAccent(button.dataset.accent)))
 
   // color picker sync
   document.getElementById('accentPicker').value = accent
@@ -2076,9 +2380,10 @@ function renderSymbolPicker() {
   picker.innerHTML = SYMBOLS.map(group => `
     <div class="sym-group-label">${group.label}</div>
     <div class="sym-group">
-      ${group.chars.map(c => `<button class="sym-btn" onmousedown="insertSymbol(event,'${c}')">${c}</button>`).join('')}
+      ${group.chars.map(c => `<button class="sym-btn" data-symbol="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
     </div>
   `).join('')
+  picker.querySelectorAll('[data-symbol]').forEach(button => button.addEventListener('mousedown', e => insertSymbol(e, button.dataset.symbol)))
 }
 
 function insertSymbol(e, char) {
