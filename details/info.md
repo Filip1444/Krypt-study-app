@@ -12,8 +12,6 @@
 | `src/dialogs.js` | Modal focus, background isolation and keyboard dismissal |
 | `src/i18n.js` | English/Croatian interface translation |
 | `src/index.html`, `src/style.css` | Interface markup and styling |
-| `tests/` | Data, lifecycle, study logic and Electron interface regression tests |
-| `reviews/` | Code review and remediation records |
 
 ## Runtime and commands
 
@@ -22,12 +20,10 @@ Use Node.js 24 or newer. The app uses Electron 44 and electron-builder 26; exact
 ```sh
 npm ci
 npx --no install-electron
-npm test
-npm run test:ui
 npm start
 ```
 
-The Electron download command prepares an offline development environment. UI tests launch hidden Electron windows against disposable temporary folders. The Windows CI workflow runs unit and interface tests before packaging.
+The Electron download command prepares an offline development environment. The Windows CI workflow installs dependencies before packaging.
 
 | Command | Output directory |
 | --- | --- |

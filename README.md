@@ -31,7 +31,7 @@ npm ci
 npm start
 ```
 
-Run data and study-logic checks with `npm test`, and Electron interface checks with `npm run test:ui`. Interface tests use hidden windows and disposable data folders. The first development launch or interface test may download the Electron binary; `npx --no install-electron` can download it in advance. CI runs both test suites before packaging.
+The first development launch may download the Electron binary; `npx --no install-electron` can download it in advance.
 
 ## Build
 
@@ -57,8 +57,6 @@ Keyboard shortcuts are listed in Settings.
 - `src/` — app interface, styling, and renderer logic
 - `assets/` — packaged app assets
 - `details/` — additional app and technical notes
-- `agents/` — project progress and improvement ideas
-- `tests/` — focused automated checks
 
 ## Tech stack
 

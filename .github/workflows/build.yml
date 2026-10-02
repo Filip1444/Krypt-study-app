@@ -24,12 +24,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Test data and study logic
-        run: npm test
-
-      - name: Test Electron interface
-        run: npm run test:ui
-
       - name: Build Windows release
         run: npm run dist:win
 

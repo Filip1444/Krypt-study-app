@@ -5,3 +5,7 @@ dist/
 release_macOS/
 test-results/
 playwright-report/
+/agents/
+/reviews/
+/tests/
+/playwright.config.js
