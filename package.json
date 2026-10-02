@@ -1,11 +1,13 @@
 {
   "name": "krypt",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "KRYPT desktop app",
   "author": "KRYPT",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test tests/*.test.js",
+    "test:ui": "playwright test",
     "dist": "electron-builder -p never",
     "dist:win": "electron-builder --win -p never",
     "dist:linux": "electron-builder --linux --config.directories.output=release_linux -p never",
@@ -19,8 +21,10 @@
     },
     "files": [
       "main.js",
+      "data-schema.js",
       "preload.js",
       "src/**/*",
+      "!src/**/*.bak",
       "assets/**/*",
       "package.json"
     ],
@@ -29,11 +33,13 @@
         "nsis",
         "portable"
       ],
-      "icon": "assets/icon.ico",
-      "sign": null
+      "icon": "assets/icon.ico"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Education",
       "icon": "icon.png"
     },
@@ -50,10 +56,8 @@
     "forceCodeSigning": false
   },
   "devDependencies": {
-    "electron": "^29.0.0",
-    "electron-builder": "^25.1.8"
-  },
-  "dependencies": {
-    "docx": "^9.6.1"
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "@playwright/test": "^1.63.0"
   }
 }

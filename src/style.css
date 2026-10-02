@@ -554,6 +554,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   overflow-y: auto;
   word-break: break-word;
 }
+.notes-editor:focus-visible { border-color: var(--accent); }
 .notes-editor:empty::before {
   content: attr(data-placeholder);
   color: var(--text-muted);
@@ -818,6 +819,9 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   margin-bottom: 20px;
   animation: fadeIn 0.15s ease;
 }
+.fc-form-title { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+.fc-reset-label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.fc-reset-label.hidden { display: none; }
 .fc-form-row {
   display: flex;
   gap: 12px;
@@ -902,6 +906,9 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   transition: border-color 0.15s;
 }
 .fc-card-row:hover { border-color: var(--border2); }
+.fc-card-actions { display: flex; align-items: center; gap: 6px; }
+.fc-edit-btn { background: none; border: 1px solid var(--border2); border-radius: 5px; color: var(--text-dim); padding: 5px 8px; cursor: pointer; }
+.fc-edit-btn:hover, .fc-edit-btn:focus-visible { color: var(--text); border-color: var(--accent); }
 .fc-card-content { flex: 1; display: flex; gap: 24px; }
 .fc-front {
   flex: 1;
@@ -928,7 +935,7 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   transition: all 0.12s;
   line-height: 1;
 }
-.fc-card-row:hover .fc-delete-btn { opacity: 1; }
+.fc-card-row:hover .fc-delete-btn, .fc-delete-btn:focus-visible { opacity: 1; }
 .fc-delete-btn:hover { color: var(--danger); }
 
 /* ── FLASHCARDS — REVIEW ── */
@@ -1556,6 +1563,27 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
   pointer-events: none;
 }
 .error-toast.show { top: 16px; }
+.save-failure {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9998;
+  width: min(680px, calc(100vw - 24px));
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  font-size: 12px;
+}
+.save-failure.hidden { display: none; }
+.save-failure span { flex: 1 1 230px; }
+.save-failure button { border: 1px solid var(--border2); border-radius: 5px; background: var(--surface); color: var(--text); padding: 6px 9px; cursor: pointer; }
 
 /* ── UNDO TOAST ── */
 .undo-toast {
@@ -2113,4 +2141,42 @@ h1 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.2
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+@media (max-width: 850px) {
+  .content { padding: 20px; min-width: 0; }
+  .page-header { gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .dashboard-grid { grid-template-columns: 1fr; }
+  .editor-toolbar { flex-wrap: wrap; }
+  .notes-editor { height: max(260px, calc(100vh - 330px)); }
+  .fc-card-content { gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+  .kanban-board { overflow-x: auto; grid-template-columns: repeat(3, minmax(200px, 1fr)); }
+  .kanban-col { min-height: 340px; }
+}
+
+@media (max-width: 700px) {
+  .app { flex-direction: column; }
+  .sidebar {
+    width: 100%; min-width: 0; max-width: none; height: auto; max-height: 190px;
+    flex: 0 0 auto; padding: 8px 12px; gap: 5px;
+  }
+  .sidebar-resizer, .streak-widget, .section-label { display: none; }
+  .logo { font-size: 16px; margin: 0; }
+  .subject-list { flex-direction: row; max-height: 40px; min-height: 36px; overflow-x: auto; }
+  .subject-row { flex: 0 0 auto; }
+  .subject-btn { flex: 0 0 auto; max-width: 130px; }
+  .subject-ctx-btn { opacity: 1; }
+  .add-subject-btn { align-self: flex-start; }
+  .sidebar-nav { flex-direction: row; margin-top: 0; padding-top: 4px; overflow-x: auto; flex-shrink: 0; }
+  .nav-btn { width: auto; flex: 0 0 auto; white-space: nowrap; padding: 6px 9px; }
+  #settingsGearBtn { align-self: flex-start; }
+  .content { padding: 16px; min-height: 0; }
+  .notes-editor { height: max(240px, calc(100vh - 430px)); padding: 14px; }
+  .fc-stats-row { gap: 6px; }
+  .fc-stat-card { min-width: 0; padding: 10px; }
+  .fc-stat-num { font-size: 20px; }
+  .fc-card-row { flex-wrap: wrap; }
+  .fc-card-content { flex-basis: 100%; }
+  .modal { max-width: calc(100vw - 24px); }
+  .settings-card { padding: 16px; }
 }

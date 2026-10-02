@@ -124,6 +124,11 @@
 
   <!-- ERROR TOAST -->
   <div class="error-toast" id="errorToast"></div>
+  <div class="save-failure hidden" id="saveFailure" role="alert">
+    <span>Changes could not be saved. Check the data folder and available disk space.</span>
+    <button type="button" id="retrySaveBtn">Retry save</button>
+    <button type="button" id="saveFailureFolderBtn">Open data folder</button>
+  </div>
   <div class="recovery-banner hidden" id="recoveryBanner">
     <span id="recoveryBannerText"></span>
     <button type="button" id="recoveryFolderBtn">Open data folder</button>
@@ -160,7 +165,7 @@
       <div class="modal-title" id="confirmTitle">Delete?</div>
       <div class="confirm-msg" id="confirmMsg"></div>
       <div class="modal-btns">
-        <button id="confirmCancelBtn">Cancel</button>
+        <button id="confirmCancelBtn" data-dialog-initial>Cancel</button>
         <button id="confirmOkBtn" class="btn-danger">Delete</button>
       </div>
     </div>
@@ -170,7 +175,7 @@
   <div class="modal-overlay hidden" id="modalOverlay">
     <div class="modal">
       <div class="modal-title" id="modalTitle">Rename</div>
-      <input type="text" id="modalInput" spellcheck="false" autocomplete="off" />
+      <input type="text" id="modalInput" aria-labelledby="modalTitle" data-dialog-initial spellcheck="false" autocomplete="off" />
       <div class="modal-btns">
         <button id="modalCancelBtn">Cancel</button>
         <button id="modalConfirmBtn" class="btn-accent">Confirm</button>
@@ -184,12 +189,12 @@
       <div class="modal-title">Quick Create Flashcard</div>
       <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;width:100%">
         <div>
-          <label style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);display:block;margin-bottom:6px">FRONT (QUESTION)</label>
+          <label for="quickFcFrontInput" style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);display:block;margin-bottom:6px">FRONT (QUESTION)</label>
           <input type="text" id="quickFcFrontInput" placeholder="Question or term..." style="width:100%;box-sizing:border-box" spellcheck="false" autocomplete="off" />
         </div>
         <div>
-          <label style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);display:block;margin-bottom:6px">BACK (ANSWER)</label>
-          <input type="text" id="quickFcBackInput" placeholder="Answer or definition..." style="width:100%;box-sizing:border-box" spellcheck="false" autocomplete="off" />
+          <label for="quickFcBackInput" style="font-family:var(--font-mono);font-size:9px;color:var(--text-muted);display:block;margin-bottom:6px">BACK (ANSWER)</label>
+          <input type="text" id="quickFcBackInput" data-dialog-initial placeholder="Answer or definition..." style="width:100%;box-sizing:border-box" spellcheck="false" autocomplete="off" />
         </div>
       </div>
       <div class="modal-btns">
@@ -287,14 +292,14 @@
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group">
-              <select id="fontFamily">
+              <select id="fontFamily" aria-label="Font family">
                 <option value="DM Mono, monospace">Mono</option>
                 <option value="Syne, sans-serif">Syne</option>
                 <option value="Georgia, serif">Georgia</option>
                 <option value="Arial, sans-serif">Arial</option>
                 <option value="'Courier New', monospace">Courier</option>
               </select>
-              <select id="fontSize">
+              <select id="fontSize" aria-label="Font size">
                 <option value="12px">12</option>
                 <option value="14px" selected>14</option>
                 <option value="16px">16</option>
@@ -321,7 +326,7 @@
             </div>
           </div>
           <input type="file" id="imageInput" accept="image/*" class="hidden" />
-          <div id="notesArea" class="notes-editor" contenteditable="true"
+          <div id="notesArea" class="notes-editor" contenteditable="true" role="textbox" aria-label="Note content" aria-multiline="true"
                spellcheck="false" data-placeholder="Start writing..."></div>
           <div class="notes-footer">
             <span id="charCount">0 characters</span>
@@ -451,6 +456,7 @@
 
         <!-- Add card form -->
         <div class="fc-add-form hidden" id="fcAddForm">
+          <div class="fc-form-title" id="fcFormTitle">New flashcard</div>
           <div class="fc-form-row">
             <div class="fc-form-field">
               <label class="fc-form-label">FRONT</label>
@@ -465,6 +471,7 @@
               <input type="text" id="fcGroupInput" placeholder="e.g. Chapter 3" spellcheck="false" autocomplete="off" />
             </div>
             <div class="fc-form-actions">
+              <label class="fc-reset-label hidden" id="fcResetLabel"><input type="checkbox" id="fcResetProgress"> Reset review progress</label>
               <button class="fc-cancel-btn" id="fcCancelBtn">Cancel</button>
               <button class="fc-save-btn" id="fcSaveBtn">Save Card</button>
             </div>
@@ -615,6 +622,8 @@
   </main>
 </div>
 <script src="i18n.js"></script>
+<script src="study-logic.js"></script>
+<script src="dialogs.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

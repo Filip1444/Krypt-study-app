@@ -18,11 +18,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test data and study logic
+        run: npm test
+
+      - name: Test Electron interface
+        run: npm run test:ui
 
       - name: Build Windows release
         run: npm run dist:win
@@ -42,6 +48,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
@@ -56,14 +65,4 @@ jobs:
           prerelease: false
           files: |
             dist/windows/*.exe
-          body: |
-            ## KRYPT ${{ github.ref_name }}
-
-            ### What's new
-            - Reorder subjects by dragging or with the keyboard; the order is saved.
-            - Color-coded grades and consistent rounded-grade target checks.
-            - English and Croatian interface options, plus data backup and recovery improvements.
-            - Polished dialogs and subject movement, with reduced-motion support.
-
-            ### Downloads
-            - Windows: installer and portable executable (`.exe`)
+          body_path: details/releases/${{ github.ref_name }}.md

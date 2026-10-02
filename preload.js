@@ -7,5 +7,7 @@ contextBridge.exposeInMainWorld('krypt', Object.freeze({
   importData: language => ipcRenderer.invoke('krypt:import', language),
   chooseDataDirectory: language => ipcRenderer.invoke('krypt:choose-directory', language),
   showDataDirectory: () => ipcRenderer.invoke('krypt:show-directory'),
-  getDataDirectory: () => ipcRenderer.invoke('krypt:get-directory')
+  getDataDirectory: () => ipcRenderer.invoke('krypt:get-directory'),
+  onFlushRequested: callback => ipcRenderer.on('krypt:flush-request', () => callback()),
+  flushComplete: ok => ipcRenderer.send('krypt:flush-complete', ok)
 }))

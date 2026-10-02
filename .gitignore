@@ -2,3 +2,6 @@ node_modules/
 release/
 release_linux/
 dist/
+release_macOS/
+test-results/
+playwright-report/

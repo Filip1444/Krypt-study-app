@@ -11,7 +11,7 @@ Whether you're a student cramming for exams or a lifelong learner keeping a pers
 
 - 📚 **Subject-based organization** — group your notes by subject
 - 📝 **Rich text notes** — write formatted notes with ease
-- 📤 **Export options** — export notes as `.txt`, `.html`, or `.docx`
+- 📤 **Workspace backups** — export and restore your complete workspace as JSON from Settings
 - 💾 **Offline & local** — your data never leaves your device
 - 🌙 **Minimal UI** — focused design so you can focus on learning
 

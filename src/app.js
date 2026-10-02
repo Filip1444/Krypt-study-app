@@ -24,18 +24,25 @@ let selectedImageElement = null
 let sidebarResizeState = null
 let selectedImageWrap = null
 let imageResizeDrag = null
+let imageInsertRange = null
+let lastEditorRange = null
 
 let timerInterval = null
 let timerSeconds = 25 * 60
 let timerTotal = 25 * 60
 let timerRunning = false
 let sessions = 0
+let timerDeadline = null
+let sessionsDay = null
+let rendererReady = false
+let quickFlashcardText = ''
 
 // Flashcard state
 let fcMode = 'list'
 let fcQueue = []
 let fcIdx = 0
 let fcFlipped = false
+let editingCardId = null
 
 // Tasks state
 let currentTaskView = 'list'
@@ -64,17 +71,19 @@ const GRADE_SYSTEMS = Object.freeze({
 // notes: { [subject]: [ { id, name, content, updatedAt, group } ] }
 // reviewLog: { 'YYYY-MM-DD': { total, correct } }
 // subjectColors: { [subject]: color }
+function subjectMap(value = {}) { return Object.assign(Object.create(null), value) }
 const data = {
-  notes: {},
-  tasks: {},
+  notes: subjectMap(),
+  tasks: subjectMap(),
   schedule: [],
-  flashcards: {},
+  flashcards: subjectMap(),
   streak: { count: 0, lastDate: null, history: {} },
-  grades: {},
-  subjectColors: {},
-  reviewLog: {},
+  grades: subjectMap(),
+  subjectColors: subjectMap(),
+  reviewLog: subjectMap(),
   settings: { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210, language: 'en', gradingSystem: 'F-A' }
 }
+const DATA_SCHEMA_VERSION = 1
 
 // ── THEME ──
 const ACCENT_PRESETS = ['#d4f57a','#67e8f9','#c084fc','#fb923c','#f472b6','#34d399']
@@ -108,7 +117,7 @@ function applyTheme() {
 
 // ── HELPERS ──
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2) }
-function todayStr() { return new Date().toISOString().slice(0, 10) }
+function todayStr() { return window.KryptStudy.localDay() }
 function appLocale() { return data.settings.language === 'hr' ? 'hr-HR' : 'en-GB' }
 function subjectLabel(name) {
   if (data.settings.language !== 'hr') return name
@@ -140,19 +149,38 @@ function escapeHtml(value) {
 function sanitizeNoteHtml(html) {
   const doc = new DOMParser().parseFromString(String(html || ''), 'text/html')
   const allowed = new Set(['P', 'DIV', 'BR', 'STRONG', 'B', 'EM', 'I', 'U', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SPAN', 'IMG'])
+  const discard = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'MATH', 'FORM', 'INPUT', 'BUTTON', 'TEXTAREA', 'SELECT', 'LINK', 'META'])
   const clean = node => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType !== Node.ELEMENT_NODE) continue
-      if (!allowed.has(child.tagName)) { child.replaceWith(...Array.from(child.childNodes)); continue }
+      if (child.classList.contains('img-resize-handle')) { child.remove(); continue }
+      if (discard.has(child.tagName)) { child.remove(); continue }
+      if (!allowed.has(child.tagName)) {
+        clean(child)
+        child.replaceWith(...Array.from(child.childNodes))
+        continue
+      }
       for (const attr of Array.from(child.attributes)) {
         if (child.tagName === 'IMG' && attr.name === 'src' && /^data:image\/(png|jpeg|gif|webp);base64,/i.test(attr.value)) continue
-        if (attr.name === 'class' && ['img-wrap', 'img-inner'].includes(attr.value)) continue
+        if (child.tagName === 'IMG' && attr.name === 'alt') continue
+        if (child.tagName === 'DIV' && attr.name === 'class') {
+          const structural = attr.value.split(/\s+/).filter(name => ['img-wrap', 'img-inner'].includes(name))
+          if (structural.length) child.setAttribute('class', structural.join(' '))
+          else child.removeAttribute('class')
+          continue
+        }
         if (attr.name === 'style') {
           const keep = []
-          for (const prop of ['text-align', 'font-family', 'font-size', 'width', 'max-width', 'display']) {
-            const value = child.style.getPropertyValue(prop).trim()
-            if (value && !/[<>"']/g.test(value)) keep.push(`${prop}:${value}`)
-          }
+          const align = child.style.textAlign
+          const family = child.style.fontFamily
+          const size = child.style.fontSize
+          const width = child.style.width
+          if (['left', 'center', 'right', 'justify'].includes(align)) keep.push(`text-align:${align}`)
+          if (/^[\w\s'",-]{1,100}$/.test(family)) keep.push(`font-family:${family}`)
+          if (/^(?:[8-9]|[1-6]\d|7[0-2])px$/.test(size)) keep.push(`font-size:${size}`)
+          if (/^\d{1,4}px$/.test(width) && parseInt(width, 10) <= 1200) keep.push(`width:${width}`)
+          if (child.style.maxWidth === '100%') keep.push('max-width:100%')
+          if (['block', 'inline', 'inline-block'].includes(child.style.display)) keep.push(`display:${child.style.display}`)
           if (keep.length) child.setAttribute('style', keep.join(';'))
           else child.removeAttribute('style')
           continue
@@ -168,15 +196,15 @@ function sanitizeNoteHtml(html) {
 }
 
 function getFiles(subject) {
-  if (!data.notes[subject]) data.notes[subject] = []
+  if (!Object.hasOwn(data.notes, subject)) data.notes[subject] = []
   return data.notes[subject]
 }
 function getCards(subject) {
-  if (!data.flashcards[subject]) data.flashcards[subject] = []
+  if (!Object.hasOwn(data.flashcards, subject)) data.flashcards[subject] = []
   return data.flashcards[subject]
 }
 function getGrades(subject) {
-  if (!data.grades[subject]) data.grades[subject] = { entries: [], targetScore: null }
+  if (!Object.hasOwn(data.grades, subject)) data.grades[subject] = { entries: [], targetScore: null }
   return data.grades[subject]
 }
 
@@ -189,7 +217,7 @@ function markGoalAchieved() {
 
   const yesterday = new Date()
   yesterday.setDate(yesterday.getDate() - 1)
-  const yStr = yesterday.toISOString().slice(0, 10)
+  const yStr = window.KryptStudy.localDay(yesterday)
 
   if (data.streak.lastDate === yStr) {
     data.streak.count += 1
@@ -210,7 +238,7 @@ function computeStreak() {
   const today = todayStr()
   const yesterday = new Date()
   yesterday.setDate(yesterday.getDate() - 1)
-  const yStr = yesterday.toISOString().slice(0, 10)
+  const yStr = window.KryptStudy.localDay(yesterday)
   if (data.streak.lastDate !== today && data.streak.lastDate !== yStr) {
     data.streak.count = 0
   }
@@ -275,38 +303,64 @@ async function loadFromDisk() {
 }
 
 let diskSaveTimer = null
+let saveRevision = 0
+let persistedRevision = 0
+let savePromise = null
 function scheduleSave() {
   if (!dataWritable) return
+  saveRevision++
+  const indicator = document.getElementById('savedIndicator')
+  if (indicator) { indicator.textContent = 'Saving...'; indicator.classList.add('show') }
   clearTimeout(diskSaveTimer)
-  diskSaveTimer = setTimeout(async () => {
+  diskSaveTimer = setTimeout(() => { void flushPendingSave() }, 600)
+}
+
+async function flushPendingSave() {
+  clearTimeout(diskSaveTimer)
+  diskSaveTimer = null
+  if (!dataWritable) return true
+  if (savePromise) await savePromise
+  if (persistedRevision >= saveRevision) return true
+  const revision = saveRevision
+  savePromise = (async () => {
     try {
-      const ok = await window.krypt.save({
-        subjects,
-        notes: data.notes,
-        tasks: data.tasks,
-        schedule: data.schedule,
-        flashcards: data.flashcards,
-        streak: data.streak,
-        grades: data.grades,
-        subjectColors: data.subjectColors,
-        reviewLog: data.reviewLog,
-        settings: data.settings
-      })
-      if (!ok) showError('Failed to save — check disk space or permissions.')
+      const ok = await window.krypt.save(currentDataExport())
+      if (!ok) throw new Error('The data file could not be written.')
+      persistedRevision = revision
+      document.getElementById('saveFailure').classList.add('hidden')
+      if (persistedRevision === saveRevision) {
+        const indicator = document.getElementById('savedIndicator')
+        indicator.textContent = 'Saved locally'
+        indicator.classList.add('show')
+        setTimeout(() => { if (persistedRevision === saveRevision) indicator.classList.remove('show') }, 1500)
+      }
+      return true
     } catch (err) {
-      console.error('scheduleSave error:', err)
-      showError('Failed to save — check disk space or permissions.')
+      console.error('Save failed:', err)
+      document.getElementById('saveFailure').classList.remove('hidden')
+      const indicator = document.getElementById('savedIndicator')
+      indicator.textContent = 'Save failed'
+      indicator.classList.add('show')
+      return false
     }
-  }, 600)
+  })()
+  const ok = await savePromise
+  savePromise = null
+  if (!ok) return false
+  return persistedRevision >= saveRevision ? true : flushPendingSave()
 }
 
 function currentDataExport() {
-  return { subjects, notes: data.notes, tasks: data.tasks, schedule: data.schedule, flashcards: data.flashcards, streak: data.streak, grades: data.grades, subjectColors: data.subjectColors, reviewLog: data.reviewLog, settings: data.settings }
+  return { schemaVersion: DATA_SCHEMA_VERSION, subjects, notes: data.notes, tasks: data.tasks, schedule: data.schedule, flashcards: data.flashcards, streak: data.streak, grades: data.grades, subjectColors: data.subjectColors, reviewLog: data.reviewLog, settings: data.settings }
 }
 function applyImportedData(saved) {
   subjects = saved.subjects
-  for (const key of ['notes', 'tasks', 'flashcards', 'grades', 'subjectColors', 'reviewLog']) data[key] = saved[key] || {}
-  for (const key of ['schedule', 'streak', 'settings']) data[key] = saved[key] || data[key]
+  hideUndoToast()
+  hideCardForm()
+  activeNoteGroup = activeFcGroup = 'All'
+  for (const key of ['notes', 'tasks', 'flashcards', 'grades', 'subjectColors', 'reviewLog']) data[key] = subjectMap(saved[key])
+  for (const key of ['schedule', 'streak']) data[key] = saved[key] || data[key]
+  data.settings = { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210, language: 'en', gradingSystem: 'F-A', ...saved.settings }
   if (!Object.hasOwn(GRADE_SYSTEMS, data.settings.gradingSystem)) data.settings.gradingSystem = 'F-A'
   dataWritable = true
   currentFileId = null
@@ -314,6 +368,8 @@ function applyImportedData(saved) {
   document.getElementById('recoveryOverlay').classList.add('hidden')
   currentSubject = subjects[0] || 'General'
   applyTheme()
+  applySidebarWidthFromSettings()
+  computeStreak()
   applyLanguage()
   renderSubjects(); updateSubjectLabels(); showFileList(); renderTasks(); renderSchedule(); updateDashboard(); renderSidebarStreak(); updateScheduleBadge()
   renderFlashcardList(); renderGrades(); renderProgress()
@@ -322,6 +378,21 @@ function applyImportedData(saved) {
 
 // ── BOOT ──
 document.addEventListener('DOMContentLoaded', async () => {
+  window.KryptDialogs.start({
+    settingsPanel: () => document.getElementById('settingsPanel').classList.add('hidden'),
+    modalOverlay: closeModal, confirmOverlay: closeConfirm,
+    quickFlashcardModal: closeQuickFlashcardModal, recoveryOverlay: null
+  })
+  window.krypt.onFlushRequested(async () => {
+    try {
+      if (!rendererReady) { window.krypt.flushComplete(false); return }
+      saveCurrentFile()
+      window.krypt.flushComplete(await flushPendingSave())
+    } catch (error) {
+      console.error('Close save failed:', error)
+      window.krypt.flushComplete(false)
+    }
+  })
   window.KryptI18n.start()
   await loadFromDisk()
   updateDate()
@@ -335,6 +406,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateScheduleBadge()
 
   const restoreData = async () => {
+    if (dataWritable && saveRevision > persistedRevision) {
+      saveCurrentFile()
+      if (!(await flushPendingSave())) return
+    }
     const result = await window.krypt.importData(data.settings.language)
     if (result.canceled) return
     if (result.error) { showError(result.error); return }
@@ -344,8 +419,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!dataWritable) { showError('Choose a recovery option before saving or exporting data.'); return }
     try {
       saveCurrentFile()
-      clearTimeout(diskSaveTimer)
-      const saved = await window.krypt.save(currentDataExport())
+      scheduleSave()
+      const saved = await flushPendingSave()
       if (!saved) { showError('Could not save current changes before creating the backup.'); return }
       const result = await window.krypt.exportData(data.settings.language)
       if (result.error) showError(result.error)
@@ -362,7 +437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (key === 'schedule') data[key] = []
       else if (key === 'streak') data[key] = { count: 0, lastDate: null, history: {} }
       else if (key === 'settings') data[key] = { theme: 'dark', accent: '#d4f57a', sidebarWidth: 210, language: 'en', gradingSystem: 'F-A' }
-      else data[key] = {}
+      else data[key] = subjectMap()
     }
     dataWritable = true
     document.getElementById('recoveryOverlay').classList.add('hidden')
@@ -384,8 +459,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('chooseDataFolderBtn').addEventListener('click', async () => {
     if (!dataWritable) { showError('Choose a recovery option before changing the data folder.'); return }
     saveCurrentFile()
-    clearTimeout(diskSaveTimer)
-    const saved = await window.krypt.save(currentDataExport())
+    scheduleSave()
+    const saved = await flushPendingSave()
     if (!saved) { showError('Could not save current changes before changing the data folder.'); return }
     const result = await window.krypt.chooseDataDirectory(data.settings.language)
     if (result.error) { showError(result.error); return }
@@ -395,6 +470,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   })
   window.krypt.getDataDirectory().then(path => { document.getElementById('dataFolderPath').textContent = path })
+  document.getElementById('retrySaveBtn').addEventListener('click', () => { void flushPendingSave() })
+  document.getElementById('saveFailureFolderBtn').addEventListener('click', () => { void window.krypt.showDataDirectory() })
+  window.addEventListener('blur', () => { void flushPendingSave() })
+  document.addEventListener('visibilitychange', () => { if (document.hidden) void flushPendingSave() })
 
   // Confirm delete modal
   document.getElementById('confirmCancelBtn').addEventListener('click', closeConfirm)
@@ -505,6 +584,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const editor = document.getElementById('notesArea')
   editor.addEventListener('input', onNotesInput)
+  editor.addEventListener('mouseup', handleNoteSelection)
+  editor.addEventListener('keyup', handleNoteSelection)
+  document.getElementById('notesSelectionBadge').addEventListener('mousedown', e => e.preventDefault())
+  document.getElementById('notesSelectionBadge').addEventListener('click', openQuickFlashcardModal)
+  document.getElementById('quickFcCancelBtn').addEventListener('click', closeQuickFlashcardModal)
+  document.getElementById('quickFcSaveBtn').addEventListener('click', saveQuickFlashcard)
+  document.getElementById('quickFcBackInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); saveQuickFlashcard() }
+  })
+  document.addEventListener('selectionchange', () => {
+    const selection = window.getSelection()
+    if (selection && selection.rangeCount && editor.contains(selection.getRangeAt(0).commonAncestorContainer)) {
+      lastEditorRange = selection.getRangeAt(0).cloneRange()
+    }
+  })
+  editor.addEventListener('paste', e => {
+    const html = e.clipboardData.getData('text/html')
+    if (!html) return
+    e.preventDefault()
+    document.execCommand('insertHTML', false, sanitizeNoteHtml(html))
+  })
   editor.addEventListener('keydown', handleEditorMarkdown)
   editor.addEventListener('keyup', updateToolbarState)
   editor.addEventListener('mouseup', updateToolbarState)
@@ -579,6 +679,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       timerSeconds = parseInt(btn.dataset.mins) * 60
       timerTotal = timerSeconds
       timerRunning = false
+      timerDeadline = null
       clearInterval(timerInterval)
       updateTimerDisplay(); updateTimerProgress()
     })
@@ -594,7 +695,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   )
 
   // Flashcards
-  document.getElementById('fcNewCardBtn').addEventListener('click', showCardForm)
+  document.getElementById('fcNewCardBtn').addEventListener('click', () => showCardForm())
   document.getElementById('fcCancelBtn').addEventListener('click', hideCardForm)
   document.getElementById('fcSaveBtn').addEventListener('click', saveNewCard)
   document.getElementById('fcStartReviewBtn').addEventListener('click', startReview)
@@ -653,6 +754,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Keyboard shortcut listener for Flashcards review
   document.addEventListener('keyup', e => {
+    if (window.KryptDialogs.active() || !document.getElementById('page-flashcards').classList.contains('active')) return
     const reviewView = document.getElementById('fcReviewView')
     if (!reviewView || reviewView.classList.contains('hidden')) return
 
@@ -677,6 +779,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (e.key === '2') { rateCard(1); return }
     }
   })
+  rendererReady = true
+  refreshCalendar()
+  setInterval(refreshCalendar, 30000)
+  window.addEventListener('focus', refreshCalendar)
 })
 
 // ── SCHEDULE BADGE ──
@@ -700,18 +806,15 @@ function updateScheduleBadge() {
 
 // ── KEYBOARD SHORTCUTS ──
 document.addEventListener('keydown', e => {
+  if (window.KryptDialogs.active()) return
   const ctrl = e.ctrlKey || e.metaKey
   if (!ctrl) return
 
-  // Ctrl+S — flash saved indicator if in editor
+  // Ctrl+S — save immediately
   if (e.key === 's') {
     e.preventDefault()
-    if (currentFileId) {
-      saveCurrentFile()
-      const ind = document.getElementById('savedIndicator')
-      ind.classList.add('show')
-      setTimeout(() => ind.classList.remove('show'), 1500)
-    }
+    if (currentFileId) saveCurrentFile()
+    void flushPendingSave()
     return
   }
 
@@ -855,6 +958,9 @@ function reorderSubject(name, target, after) {
 }
 
 function selectSubject(name) {
+  saveCurrentFile()
+  hideSelectionBadge()
+  hideCardForm()
   currentSubject = name
   currentFileId = null
   activeNoteGroup = 'All'
@@ -909,27 +1015,14 @@ function renameSubject(oldName, newName) {
 function deleteSubject(name) {
   if (subjects.length <= 1) { showError('You need at least one subject.'); return }
   openConfirm('Delete Subject', `Delete "${name}" and all its notes, tasks, flashcards and grades? This cannot be undone.`, () => {
-    const idx = subjects.indexOf(name)
-    const snapshot = {
-      notes: data.notes[name], tasks: data.tasks[name], flashcards: data.flashcards[name],
-      grades: data.grades[name], subjectColors: data.subjectColors[name]
-    }
-    subjects = subjects.filter(s => s !== name)
-    delete data.notes[name]
-    delete data.tasks[name]
-    delete data.flashcards[name]
-    delete data.grades[name]
-    delete data.subjectColors[name]
+    saveCurrentFile()
+    const snapshot = window.KryptStudy.deleteSubjectData(subjects, data, name)
+    if (!snapshot) return
     if (currentSubject === name) selectSubject(subjects[0])
     else renderSubjects()
     scheduleSave()
     showUndoToast(`Subject "${name}" deleted`, () => {
-      subjects.splice(Math.min(idx, subjects.length), 0, name)
-      if (snapshot.notes) data.notes[name] = snapshot.notes
-      if (snapshot.tasks) data.tasks[name] = snapshot.tasks
-      if (snapshot.flashcards) data.flashcards[name] = snapshot.flashcards
-      if (snapshot.grades) data.grades[name] = snapshot.grades
-      if (snapshot.subjectColors) data.subjectColors[name] = snapshot.subjectColors
+      window.KryptStudy.restoreSubjectData(subjects, data, snapshot)
       renderSubjects()
       scheduleSave()
     })
@@ -1206,11 +1299,14 @@ function createNewFile() {
 function openFile(id) {
   const file = getFiles(currentSubject).find(f => f.id === id)
   if (!file) return
+  hideSelectionBadge()
+  clearImageSelection()
   currentFileId = id
   document.getElementById('notesFileView').classList.add('hidden')
   document.getElementById('notesEditorView').classList.remove('hidden')
   document.getElementById('editorFilename').textContent = file.name
   const editor = document.getElementById('notesArea')
+  lastEditorRange = null
   editor.innerHTML = sanitizeNoteHtml(file.content)
   hydrateEditorEntities(editor)
   updateCharCount()
@@ -1230,7 +1326,7 @@ function backToFiles() {
 
 function saveCurrentFile() {
   if (!currentFileId) return
-  const file = getFiles(currentSubject).find(f => f.id === currentFileId)
+  const file = data.notes[currentSubject]?.find(f => f.id === currentFileId)
   if (!file) return
   file.content = sanitizeNoteHtml(document.getElementById('notesArea').innerHTML)
   file.updatedAt = Date.now()
@@ -1321,6 +1417,7 @@ function handleNoteSelection(e) {
       hideSelectionBadge()
       return
     }
+    quickFlashcardText = text
 
     const rect = range.getBoundingClientRect()
 
@@ -1349,7 +1446,8 @@ function hideSelectionBadge() {
 
 function openQuickFlashcardModal() {
   const sel = window.getSelection()
-  const text = sel ? sel.toString().trim() : ''
+  const text = (sel ? sel.toString().trim() : '') || quickFlashcardText
+  if (!text) return
 
   const modal = document.getElementById('quickFlashcardModal')
   const frontInput = document.getElementById('quickFcFrontInput')
@@ -1397,20 +1495,9 @@ function saveQuickFlashcard() {
 }
 
 
-let noteSaveTimer = null
 function onNotesInput() {
   saveCurrentFile()
   updateCharCount()
-  clearTimeout(noteSaveTimer)
-  const ind = document.getElementById('savedIndicator')
-  ind.textContent = 'Saving...'
-  ind.classList.add('show')
-  noteSaveTimer = setTimeout(() => {
-    ind.textContent = 'Saved locally'
-    setTimeout(() => {
-      ind.classList.remove('show')
-    }, 1500)
-  }, 800)
 }
 
 function updateCharCount() {
@@ -1616,16 +1703,20 @@ let pendingFontFamily = null
 
 function applyFormatAtCursor(type, value) {
   const editor = document.getElementById('notesArea')
-  editor.focus()
   const sel = window.getSelection()
   if (!sel) return
+  const range = sel.rangeCount && editor.contains(sel.getRangeAt(0).commonAncestorContainer)
+    ? sel.getRangeAt(0) : lastEditorRange
+  if (!range || !editor.contains(range.commonAncestorContainer)) return
+  editor.focus()
+  sel.removeAllRanges()
+  sel.addRange(range)
 
   if (type === 'fontSize') pendingFontSize = value
   if (type === 'fontFamily') pendingFontFamily = value
 
   if (!sel.isCollapsed) {
     // apply to selected text by wrapping in a span
-    const range = sel.getRangeAt(0)
     // unwrap any existing size spans inside the selection first
     const frag = range.extractContents()
     frag.querySelectorAll('span[data-fmt]').forEach(s => {
@@ -1645,11 +1736,11 @@ function applyFormatAtCursor(type, value) {
     range.collapse(true)
     sel.removeAllRanges()
     sel.addRange(range)
+    onNotesInput()
     return
   }
 
   // no selection — insert anchor span at cursor for next typing
-  const range = sel.getRangeAt(0)
   // remove any previous zero-width anchor spans we left
   editor.querySelectorAll('span[data-anchor]').forEach(s => {
     if (s.textContent === '\u200B') s.remove()
@@ -1666,6 +1757,7 @@ function applyFormatAtCursor(type, value) {
   range.collapse(true)
   sel.removeAllRanges()
   sel.addRange(range)
+  onNotesInput()
 }
 
 function playTimerChime() {
@@ -1702,10 +1794,21 @@ function updateTimerProgress() {
 }
 function startTimer() {
   if (timerRunning) return
+  refreshCalendar()
+  if (timerSeconds <= 0) timerSeconds = timerTotal
+  timerDeadline = Date.now() + timerSeconds * 1000
   timerRunning = true
-  timerInterval = setInterval(() => {
-    if (timerSeconds <= 0) {
+  updateTimerDisplay(); updateTimerProgress()
+  timerInterval = setInterval(tickTimer, 250)
+}
+function tickTimer() {
+    if (!timerRunning || timerDeadline === null) return
+    timerSeconds = window.KryptStudy.remainingSeconds(timerDeadline)
+    updateTimerDisplay(); updateTimerProgress()
+    if (timerSeconds === 0) {
       clearInterval(timerInterval); timerRunning = false
+      timerDeadline = null
+      refreshCalendar()
       sessions++
       document.getElementById('sessionCount').textContent = sessions
       playTimerChime()
@@ -1716,14 +1819,29 @@ function startTimer() {
       }
       return
     }
-    timerSeconds--; updateTimerDisplay(); updateTimerProgress()
-  }, 1000)
 }
-function pauseTimer() { timerRunning = false; clearInterval(timerInterval) }
+function pauseTimer() {
+  tickTimer()
+  timerRunning = false
+  timerDeadline = null
+  clearInterval(timerInterval)
+}
 function resetTimer() {
   timerRunning = false; clearInterval(timerInterval)
+  timerDeadline = null
   timerSeconds = parseInt(document.querySelector('.mode-btn.active').dataset.mins) * 60
   timerTotal = timerSeconds; updateTimerDisplay(); updateTimerProgress()
+}
+
+function refreshCalendar() {
+  if (!rendererReady) return
+  const day = todayStr()
+  if (sessionsDay === day) return
+  sessionsDay = day
+  sessions = 0
+  document.getElementById('sessionCount').textContent = sessions
+  computeStreak()
+  updateDate(); renderSidebarStreak(); renderSchedule(); updateScheduleBadge(); renderProgress()
 }
 
 // ── SCHEDULE ──
@@ -1912,18 +2030,32 @@ function renderFlashcardList() {
         <div class="fc-front">${escapeHtml(c.front)} <span class="fc-group-tag">${escapeHtml(groupLabel(c.group || 'General'))}</span></div>
         <div class="fc-back">${escapeHtml(c.back)}</div>
       </div>
-      <button class="fc-delete-btn" data-card-id="${escapeHtml(c.id)}">×</button>
+      <div class="fc-card-actions">
+        <button class="fc-edit-btn" data-edit-card-id="${escapeHtml(c.id)}" aria-label="Edit flashcard">Edit</button>
+        <button class="fc-delete-btn" data-card-id="${escapeHtml(c.id)}" aria-label="Delete flashcard">×</button>
+      </div>
     </div>
   `).join('')
+  list.querySelectorAll('[data-edit-card-id]').forEach(button => button.addEventListener('click', () => showCardForm(button.dataset.editCardId)))
   list.querySelectorAll('[data-card-id]').forEach(button => button.addEventListener('click', () => deleteCard(button.dataset.cardId)))
 }
 
-function showCardForm() {
+function showCardForm(id = null) {
+  const card = id ? getCards(currentSubject).find(c => c.id === id) : null
+  editingCardId = card ? card.id : null
+  document.getElementById('fcFormTitle').textContent = card ? 'Edit flashcard' : 'New flashcard'
+  document.getElementById('fcSaveBtn').textContent = card ? 'Save Changes' : 'Save Card'
+  document.getElementById('fcFrontInput').value = card ? card.front : ''
+  document.getElementById('fcBackInput').value = card ? card.back : ''
+  document.getElementById('fcGroupInput').value = card ? card.group || 'General' : ''
+  document.getElementById('fcResetProgress').checked = false
+  document.getElementById('fcResetLabel').classList.toggle('hidden', !card)
   document.getElementById('fcAddForm').classList.remove('hidden')
   document.getElementById('fcFrontInput').focus()
 }
 
 function hideCardForm() {
+  editingCardId = null
   document.getElementById('fcAddForm').classList.add('hidden')
   document.getElementById('fcFrontInput').value = ''
   document.getElementById('fcBackInput').value = ''
@@ -1938,6 +2070,15 @@ function saveNewCard() {
   const groupInput = document.getElementById('fcGroupInput')
   const typedGroup = groupInput ? groupInput.value.trim() : ''
   const group = typedGroup || (activeFcGroup !== 'All' ? activeFcGroup : 'General')
+  if (editingCardId) {
+    const card = getCards(currentSubject).find(c => c.id === editingCardId)
+    if (!card) { hideCardForm(); return }
+    window.KryptStudy.updateFlashcard(card, front, back, group, document.getElementById('fcResetProgress').checked)
+    hideCardForm()
+    renderFlashcardList()
+    scheduleSave()
+    return
+  }
   const card = { id: uid(), front, back, due: Date.now(), interval: 1, ease: 2.5, group }
   getCards(currentSubject).unshift(card)
   hideCardForm()
@@ -2029,17 +2170,7 @@ function logReview(correct) {
 function rateCard(gotIt) {
   const card = fcQueue[fcIdx]
   const original = getCards(currentSubject).find(c => c.id === card.id)
-  if (original) {
-    if (gotIt) {
-      original.ease = Math.max(1.3, original.ease + 0.1)
-      original.interval = Math.round(original.interval * original.ease)
-      original.due = Date.now() + original.interval * 24 * 60 * 60 * 1000
-    } else {
-      original.interval = 1
-      original.ease = Math.max(1.3, original.ease - 0.2)
-      original.due = Date.now() + 60 * 1000
-    }
-  }
+  if (original) window.KryptStudy.rateFlashcard(original, gotIt)
   logReview(!!gotIt)
   fcIdx++
   scheduleSave()
@@ -2087,7 +2218,7 @@ function renderHeatmap() {
   for (let i = 29; i >= 0; i--) {
     const d = new Date()
     d.setDate(d.getDate() - i)
-    days.push(d.toISOString().slice(0, 10))
+    days.push(window.KryptStudy.localDay(d))
   }
   grid.innerHTML = days.map(dateStr => {
     const done = !!data.streak.history[dateStr]
@@ -2105,7 +2236,7 @@ function renderRetentionChart() {
   for (let i = 13; i >= 0; i--) {
     const d = new Date()
     d.setDate(d.getDate() - i)
-    days.push(d.toISOString().slice(0, 10))
+    days.push(window.KryptStudy.localDay(d))
   }
   const hasAnyData = days.some(d => data.reviewLog[d] && data.reviewLog[d].total > 0)
   emptyMsg.style.display = hasAnyData ? 'none' : 'block'
@@ -2119,7 +2250,7 @@ function renderRetentionChart() {
     const label = d.toLocaleDateString(appLocale(), { day: 'numeric', month: 'short' })
     const title = log && log.total > 0 ? `${label}: ${pct}% (${log.correct}/${log.total})` : `${label}: no reviews`
     return `
-      <div class="retention-bar-col" title="${title}">
+      <div class="retention-bar-col" title="${escapeHtml(title)}">
         <div class="retention-bar ${log && log.total > 0 ? '' : 'empty'}" style="height:${log && log.total > 0 ? Math.max(pct, 3) : 2}%"></div>
         <div class="retention-bar-label">${d.getDate()}</div>
       </div>
@@ -2434,6 +2565,10 @@ function applyAlignment(cmd) {
 }
 
 function openImagePicker() {
+  const editor = document.getElementById('notesArea')
+  const selection = window.getSelection()
+  imageInsertRange = selection && selection.rangeCount && editor.contains(selection.getRangeAt(0).commonAncestorContainer)
+    ? selection.getRangeAt(0).cloneRange() : lastEditorRange?.cloneRange() || null
   const input = document.getElementById('imageInput')
   input.value = ''
   input.click()
@@ -2441,14 +2576,20 @@ function openImagePicker() {
 
 function onImagePicked(e) {
   const file = e.target.files && e.target.files[0]
-  if (!file) return
+  if (!file) { imageInsertRange = null; return }
+  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
+    imageInsertRange = null
+    showError('Choose a PNG, JPEG, GIF, or WebP image.')
+    return
+  }
   const MAX_SIZE = 8 * 1024 * 1024 // 8MB
   if (file.size > MAX_SIZE) {
+    imageInsertRange = null
     showError('Image is too large (max 8MB). Please choose a smaller file.')
     return
   }
   const reader = new FileReader()
-  reader.onerror = () => showError('Failed to read image file.')
+  reader.onerror = () => { imageInsertRange = null; showError('Failed to read image file.') }
   reader.onload = ev => insertImageAtCursor(ev.target.result)
   reader.readAsDataURL(file)
 }
@@ -2457,9 +2598,13 @@ function insertImageAtCursor(src) {
   const editor = document.getElementById('notesArea')
   editor.focus()
   const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return
-  const range = sel.getRangeAt(0)
-  if (!editor.contains(range.commonAncestorContainer)) return
+  const range = imageInsertRange || (sel && sel.rangeCount ? sel.getRangeAt(0) : null)
+  imageInsertRange = null
+  const insertionRange = range && editor.contains(range.commonAncestorContainer) ? range : document.createRange()
+  if (insertionRange !== range) {
+    insertionRange.selectNodeContents(editor)
+    insertionRange.collapse(false)
+  }
   const wrap = document.createElement('div')
   wrap.className = 'img-wrap'
   wrap.style.textAlign = 'left'
@@ -2473,11 +2618,11 @@ function insertImageAtCursor(src) {
   img.alt = 'note image'
   inner.appendChild(img)
   wrap.appendChild(inner)
-  range.insertNode(wrap)
-  range.setStartAfter(wrap)
-  range.collapse(true)
+  insertionRange.insertNode(wrap)
+  insertionRange.setStartAfter(wrap)
+  insertionRange.collapse(true)
   sel.removeAllRanges()
-  sel.addRange(range)
+  sel.addRange(insertionRange)
   onNotesInput()
 }
 

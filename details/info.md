@@ -1,80 +1,64 @@
-# KRYPT — Technical Info
+﻿# KRYPT technical information
 
-## Project Structure
+## Source layout
 
-```
-krypt/
-├── main.js            # Electron main process
-├── package.json       # Project config & build settings
-├── icon.png           # App icon (source PNG)
-├── src/
-│   ├── index.html     # App UI entry point
-│   ├── app.js         # Renderer-process logic
-│   └── style.css      # Global styles
-├── release/           # Windows build output
-├── release_macOS/     # macOS build output
-└── details/
-    ├── intro.md       # App introduction
-    └── info.md        # This file — technical details
-```
+| File or directory | Purpose |
+| --- | --- |
+| `main.js` | Electron lifecycle, one-instance enforcement, IPC, local storage, backup and folder migration |
+| `preload.js` | Context-isolated renderer API |
+| `data-schema.js` | Workspace validation and legacy migration |
+| `src/app.js` | App state and interface behavior |
+| `src/study-logic.js` | Flashcard scheduling, local calendar keys, timer calculation and subject operations |
+| `src/dialogs.js` | Modal focus, background isolation and keyboard dismissal |
+| `src/i18n.js` | English/Croatian interface translation |
+| `src/index.html`, `src/style.css` | Interface markup and styling |
+| `tests/` | Data, lifecycle, study logic and Electron interface regression tests |
+| `reviews/` | Code review and remediation records |
 
-## Tech Stack
+## Runtime and commands
 
-| Layer | Technology |
-|-------|-----------|
-| Shell | [Electron](https://www.electronjs.org/) v29 |
-| UI | Vanilla HTML + CSS + JavaScript |
-| Export | [docx](https://www.npmjs.com/package/docx) v9 |
-| Bundler | [electron-builder](https://www.electron.build/) v25 |
+Use Node.js 24 or newer. The app uses Electron 44 and electron-builder 26; exact versions are locked in `package-lock.json`. Export is complete-workspace JSON. No DOCX library is required.
 
-## Build & Run
-
-### Development
-
-```bash
+```sh
+npm ci
+npx --no install-electron
+npm test
+npm run test:ui
 npm start
 ```
 
-### Build for Windows
+The Electron download command prepares an offline development environment. UI tests launch hidden Electron windows against disposable temporary folders. The Windows CI workflow runs unit and interface tests before packaging.
 
-```bash
-npm run dist:win
-```
-Output goes to `release/`.
+| Command | Output directory |
+| --- | --- |
+| `npm run dist:win` | `release/` — NSIS installer and portable executable |
+| `npm run dist:linux` | `release_linux/` — AppImage and Debian package |
+| `npm run dist:mac` | `release_macOS/` — DMG |
 
-### Build for macOS
+Build on the target platform for release verification. Windows builds are configured for unsigned distribution; macOS signing/notarization requires separately supplied credentials. Backup source files (`*.bak`) are excluded from app packages.
 
-```bash
-npm run dist:mac
-```
-Output goes to `release_macOS/`.
+## Local storage
 
-## Data Storage
+The default `krypt-data.json` location is Electron's per-user application data directory, normally `%APPDATA%\krypt\` on Windows, `~/Library/Application Support/krypt/` on macOS, and `~/.config/krypt/` on Linux. Settings displays the active directory and allows changing it.
 
-User data (subjects, notes) is persisted as JSON in the OS user-data directory:
+Saves replace the primary file atomically, keep a recovery copy, and retain ten recent automatic snapshots in `backups/`. Unreadable-file archives are preserved separately from snapshot rotation. Folder changes copy the readable workspace, prefer the valid modern recovery backup over a legacy backup, retain snapshots, and commit the new configuration atomically. A failed migration leaves the original directory active.
 
-| Platform | Path |
-|----------|------|
-| Windows  | `%APPDATA%\krypt\krypt-data.json` |
-| macOS    | `~/Library/Application Support/krypt/krypt-data.json` |
+Study history and review dates use local calendar days. Historical day keys are preserved when loading existing workspaces because the original timestamps needed to reinterpret old UTC keys are unavailable.
 
-## Icon Files
+Timer time continues while the computer is asleep; completion is processed on resume. Pausing freezes the displayed remaining time. Restarting a completed timer begins a new full-duration session.
 
-| File | Used For |
-|------|---------|
-| `icon.png` | Source image (used by electron-builder for macOS `.icns`) |
-| `release/.icon-ico/icon.ico` | Windows taskbar / titlebar / installer icon |
+## Icons and shortcuts
 
-## Keyboard Shortcuts
+`assets/icon.ico` supplies the Windows app and installer icon. `icon.png` is the source icon for macOS/Linux packaging.
 
 | Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+I` | Toggle DevTools |
+| --- | --- |
+| Ctrl/Cmd+S | Flush the current note to disk |
+| Ctrl/Cmd+N | New note or flashcard on the corresponding page |
+| Ctrl/Cmd+B / I / U | Bold, italic, underline in the editor |
+| Ctrl/Cmd+Z / Y | Undo/redo in the editor |
+| Space, then 1 or 2 | Flip and rate a flashcard |
+| Tab / Shift+Tab | Move within the open dialog |
+| Escape | Dismiss a cancellable dialog |
 
-## Version History
-
-| Version | Notes |
-|---------|-------|
-| 1.0.0 BETA | Initial release (Windows) |
-| 1.0.0 | Stable Windows release + macOS build |
-| 1.1.0 | Rebranded to KRYPT, added Windows installation wizard |
+The unreadable-data recovery dialog stays open until a recovery action succeeds. DevTools are disabled in the app window.
